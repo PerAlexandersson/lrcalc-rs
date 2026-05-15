@@ -47,6 +47,20 @@ pub struct LrGtInteriorDfsStats {
     pub strict_yamanouchi_constraints: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrGtCountsStats {
+    pub full: u128,
+    pub interior: u128,
+    pub full_peak_states: usize,
+    pub full_levels: Vec<usize>,
+    pub interior_peak_states: usize,
+    pub interior_levels: Vec<usize>,
+    pub full_reachable_levels: Vec<usize>,
+    pub strict_lower_constraints: usize,
+    pub strict_diagonal_constraints: usize,
+    pub strict_yamanouchi_constraints: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Packer {
     bits: u32,
@@ -194,6 +208,187 @@ pub fn lrcoef_gt_interior_dfs_stats(
             lrcoef_gt_interior_dfs_stats_compacted(&shape.outer, &shape.inner, &shape.content)
         }
     }
+}
+
+/// Compute full and relative-interior LR counts in one GT-chain DP setup.
+pub fn lrcoef_gt_counts_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrGtCountsStats, LrGtError> {
+    match optim_coef(outer, inner, content).map_err(map_lrcoef_error)? {
+        OptimizedCoef::Zero => Ok(zero_counts_stats()),
+        OptimizedCoef::One => Ok(one_counts_stats()),
+        OptimizedCoef::Count(shape) => {
+            lrcoef_gt_counts_stats_compacted(&shape.outer, &shape.inner, &shape.content)
+        }
+    }
+}
+
+fn lrcoef_gt_counts_stats_compacted(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrGtCountsStats, LrGtError> {
+    let outer = normalize_partition(outer)?;
+    let inner = normalize_partition(inner)?;
+    let content = normalize_partition(content)?;
+
+    let outer_size = checked_sum(&outer)?;
+    let inner_size = checked_sum(&inner)?;
+    let content_size = checked_sum(&content)?;
+    if inner_size > outer_size || !partition_less_equal(&inner, &outer) {
+        return Ok(zero_counts_stats());
+    }
+    if outer_size - inner_size != content_size {
+        return Ok(zero_counts_stats());
+    }
+    if content_size == 0 {
+        return Ok(if trim_eq(&outer, &inner) {
+            one_counts_stats()
+        } else {
+            zero_counts_stats()
+        });
+    }
+
+    let rows = outer.len();
+    if rows == 0 {
+        return Ok(zero_counts_stats());
+    }
+
+    let partition_packer = Packer::new(bit_width(*outer.first().unwrap_or(&0)), rows)?;
+    let prefix_packer = Packer::new(bit_width(content_size), rows + 1)?;
+    let inner_key = partition_packer.pack_padded(&inner)?;
+    let outer_key = partition_packer.pack(&outer)?;
+    let start = (inner_key, 0);
+
+    let mut dp: HashMap<State, u128> = HashMap::new();
+    dp.insert(start, 1);
+    let mut reachable = Vec::<HashSet<State>>::with_capacity(content.len() + 1);
+    reachable.push(HashSet::from([start]));
+    let mut full_peak_states = dp.len();
+    let mut full_levels = vec![dp.len()];
+
+    for (step, &strip_size) in content.iter().enumerate() {
+        let mut next: HashMap<State, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
+        let mut next_reachable = HashSet::new();
+        for (&state, &count) in &dp {
+            enumerate_transition_details(
+                partition_packer,
+                prefix_packer,
+                &outer,
+                state.0,
+                strip_size,
+                previous_prefix_key(step, state),
+                |transition| {
+                    let entry = next.entry(transition.target).or_insert(0);
+                    *entry = entry
+                        .checked_add(count)
+                        .ok_or(LrGtError::ArithmeticOverflow)?;
+                    next_reachable.insert(transition.target);
+                    Ok(())
+                },
+            )?;
+        }
+        full_peak_states = full_peak_states.max(next.len());
+        full_levels.push(next.len());
+        reachable.push(next_reachable);
+        dp = next;
+    }
+
+    let mut full = 0u128;
+    for ((partition_key, _), count) in &dp {
+        if *partition_key == outer_key {
+            full = full
+                .checked_add(*count)
+                .ok_or(LrGtError::ArithmeticOverflow)?;
+        }
+    }
+
+    let full_reachable_levels = reachable.iter().map(HashSet::len).collect::<Vec<_>>();
+    let coreachable = coreachable_levels(
+        partition_packer,
+        prefix_packer,
+        &outer,
+        &content,
+        outer_key,
+        &reachable,
+    )?;
+    if !coreachable[0].contains(&start) {
+        return Ok(LrGtCountsStats {
+            full,
+            full_peak_states,
+            full_levels,
+            full_reachable_levels,
+            ..zero_counts_stats()
+        });
+    }
+
+    let tight = tight_flags_on_complete_paths(
+        partition_packer,
+        prefix_packer,
+        &outer,
+        &content,
+        &coreachable,
+    )?;
+    let (strict_lower, strict_diagonal, strict_yamanouchi) = tight.strict_counts();
+
+    let mut strict_dp: HashMap<State, u128> = HashMap::new();
+    strict_dp.insert(start, 1);
+    let mut interior_peak_states = strict_dp.len();
+    let mut interior_levels = vec![strict_dp.len()];
+
+    for (step, &strip_size) in content.iter().enumerate() {
+        let mut next: HashMap<State, u128> =
+            HashMap::with_capacity(strict_dp.len().saturating_mul(2));
+        for (&state, &count) in &strict_dp {
+            enumerate_relative_interior_transitions(
+                partition_packer,
+                prefix_packer,
+                &outer,
+                state.0,
+                strip_size,
+                previous_prefix_key(step, state),
+                step,
+                &tight,
+                |target| {
+                    if !coreachable[step + 1].contains(&target) {
+                        return Ok(());
+                    }
+                    let entry = next.entry(target).or_insert(0);
+                    *entry = entry
+                        .checked_add(count)
+                        .ok_or(LrGtError::ArithmeticOverflow)?;
+                    Ok(())
+                },
+            )?;
+        }
+        interior_peak_states = interior_peak_states.max(next.len());
+        interior_levels.push(next.len());
+        strict_dp = next;
+    }
+
+    let mut interior = 0u128;
+    for ((partition_key, _), count) in strict_dp {
+        if partition_key == outer_key {
+            interior = interior
+                .checked_add(count)
+                .ok_or(LrGtError::ArithmeticOverflow)?;
+        }
+    }
+
+    Ok(LrGtCountsStats {
+        full,
+        interior,
+        full_peak_states,
+        full_levels,
+        interior_peak_states,
+        interior_levels,
+        full_reachable_levels,
+        strict_lower_constraints: strict_lower,
+        strict_diagonal_constraints: strict_diagonal,
+        strict_yamanouchi_constraints: strict_yamanouchi,
+    })
 }
 
 fn lrcoef_gt_interior_dfs_stats_compacted(
@@ -1399,6 +1594,36 @@ fn one_interior_dfs_stats() -> LrGtInteriorDfsStats {
     }
 }
 
+fn zero_counts_stats() -> LrGtCountsStats {
+    LrGtCountsStats {
+        full: 0,
+        interior: 0,
+        full_peak_states: 0,
+        full_levels: Vec::new(),
+        interior_peak_states: 0,
+        interior_levels: Vec::new(),
+        full_reachable_levels: Vec::new(),
+        strict_lower_constraints: 0,
+        strict_diagonal_constraints: 0,
+        strict_yamanouchi_constraints: 0,
+    }
+}
+
+fn one_counts_stats() -> LrGtCountsStats {
+    LrGtCountsStats {
+        full: 1,
+        interior: 1,
+        full_peak_states: 1,
+        full_levels: vec![1],
+        interior_peak_states: 1,
+        interior_levels: vec![1],
+        full_reachable_levels: vec![1],
+        strict_lower_constraints: 0,
+        strict_diagonal_constraints: 0,
+        strict_yamanouchi_constraints: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1471,6 +1696,27 @@ mod tests {
             lrcoef_gt_interior_u128(&[5, 4, 3, 2, 1], &[3, 2, 1], &[4, 3, 1, 1]),
             Ok(0)
         );
+    }
+
+    #[test]
+    fn paired_counts_match_separate_gt_paths() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..]),
+            (&[4, 2][..], &[2, 1][..], &[2, 1][..]),
+            (
+                &[7, 6, 5, 4, 3, 2, 1][..],
+                &[4, 4, 3, 2, 1][..],
+                &[5, 4, 3, 2][..],
+            ),
+        ];
+        for (outer, inner, content) in cases {
+            let counts = lrcoef_gt_counts_stats(outer, inner, content).unwrap();
+            assert_eq!(counts.full, lrcoef_gt_u128(outer, inner, content).unwrap());
+            assert_eq!(
+                counts.interior,
+                lrcoef_gt_interior_u128(outer, inner, content).unwrap()
+            );
+        }
     }
 
     #[test]

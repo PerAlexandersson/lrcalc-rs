@@ -25,11 +25,18 @@ engines.
   not upstream `mult`, `skew`, `coprod`, `tab`, or `schubmult` behavior.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
+- `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
+  stretched Kostka DP and the equivalent stretched LR GT-chain DP.
 
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-15:
-38 library tests, all benchmark-bin test targets, and doc-tests.
+40 library tests, all benchmark-bin test targets, and doc-tests.
+
+`timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
+passed on 2026-05-15.  The first run showed the equivalent LR GT-chain DP is
+about `910x` slower than packed Kostka DP on the scaled Kostka-translation
+suite, with matching full and interior counts.
 
 ## Main Gaps
 
@@ -53,6 +60,8 @@ engines.
   against a freshly built upstream C binary.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
+- Use `stretched_dp_bench` results to decide whether to detect
+  Kostka-translation LR triples and dispatch them to the packed Kostka DP.
 
 ## Notes
 

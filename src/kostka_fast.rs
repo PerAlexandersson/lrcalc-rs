@@ -33,6 +33,19 @@ pub struct KostkaInteriorStats {
     pub strict_diagonal_constraints: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KostkaCountsStats {
+    pub full: u128,
+    pub interior: u128,
+    pub full_peak_states: usize,
+    pub full_levels: Vec<usize>,
+    pub interior_peak_states: usize,
+    pub interior_levels: Vec<usize>,
+    pub full_reachable_levels: Vec<usize>,
+    pub strict_lower_constraints: usize,
+    pub strict_diagonal_constraints: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PackedPartitions {
     bits: u32,
@@ -88,6 +101,141 @@ pub fn skew_kostka_interior_u128(
     weight: &[i32],
 ) -> Result<u128, KostkaFastError> {
     Ok(skew_kostka_interior_stats(outer, inner, weight)?.value)
+}
+
+/// Compute full and relative-interior counts for `GT(shape, weight)`.
+pub fn kostka_counts_stats(
+    shape: &[i32],
+    weight: &[i32],
+) -> Result<KostkaCountsStats, KostkaFastError> {
+    skew_kostka_counts_stats(shape, &[], weight)
+}
+
+/// Compute full and relative-interior counts for `GT(outer/inner, weight)`.
+pub fn skew_kostka_counts_stats(
+    outer: &[i32],
+    inner: &[i32],
+    weight: &[i32],
+) -> Result<KostkaCountsStats, KostkaFastError> {
+    let outer = normalize_partition(outer)?;
+    let inner = normalize_partition(inner)?;
+    let mut weight = normalize_weight(weight)?;
+    let outer_size = checked_sum(&outer)?;
+    let inner_size = checked_sum(&inner)?;
+    if inner_size > outer_size || !partition_less_equal(&inner, &outer) {
+        return Ok(zero_counts_stats());
+    }
+    let skew_size = outer_size - inner_size;
+    let weight_size = checked_sum(&weight)?;
+    if skew_size != weight_size {
+        return Ok(zero_counts_stats());
+    }
+    if skew_size == 0 {
+        return Ok(if trim_eq(&outer, &inner) {
+            one_counts_stats()
+        } else {
+            zero_counts_stats()
+        });
+    }
+    if outer.is_empty() {
+        return Ok(zero_counts_stats());
+    }
+
+    weight.sort_unstable_by(|a, b| b.cmp(a));
+    if inner.is_empty() && !dominates(&outer, &weight) {
+        return Ok(zero_counts_stats());
+    }
+
+    let packer = PackedPartitions::new(&outer)?;
+    let inner_key = packer.pack_padded(&inner, outer.len())?;
+    let outer_key = packer.pack(&outer)?;
+
+    let mut dp: HashMap<u128, u128> = HashMap::new();
+    dp.insert(inner_key, 1);
+    let mut reachable = Vec::<HashSet<u128>>::with_capacity(weight.len() + 1);
+    reachable.push(HashSet::from([inner_key]));
+    let mut full_peak_states = dp.len();
+    let mut full_levels = vec![dp.len()];
+
+    for &strip_size in &weight {
+        let mut next: HashMap<u128, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
+        let mut next_reachable = HashSet::new();
+        for (&state, &count) in &dp {
+            enumerate_strip_transitions(packer, &outer, state, strip_size, |transition| {
+                let entry = next.entry(transition.target).or_insert(0);
+                *entry = entry
+                    .checked_add(count)
+                    .ok_or(KostkaFastError::ArithmeticOverflow)?;
+                next_reachable.insert(transition.target);
+                Ok(())
+            })?;
+        }
+        full_peak_states = full_peak_states.max(next.len());
+        full_levels.push(next.len());
+        reachable.push(next_reachable);
+        dp = next;
+    }
+
+    let full = dp.remove(&outer_key).unwrap_or(0);
+    let full_reachable_levels = reachable.iter().map(HashSet::len).collect::<Vec<_>>();
+    let coreachable = kostka_coreachable_levels(packer, &outer, &weight, outer_key, &reachable)?;
+    if !coreachable[0].contains(&inner_key) {
+        return Ok(KostkaCountsStats {
+            full,
+            full_peak_states,
+            full_levels,
+            full_reachable_levels,
+            ..zero_counts_stats()
+        });
+    }
+
+    let tight = kostka_tight_flags_on_complete_paths(packer, &outer, &weight, &coreachable)?;
+    let (strict_lower, strict_diagonal) = tight.strict_counts();
+
+    let mut strict_dp: HashMap<u128, u128> = HashMap::new();
+    strict_dp.insert(inner_key, 1);
+    let mut interior_peak_states = strict_dp.len();
+    let mut interior_levels = vec![strict_dp.len()];
+
+    for (step, &strip_size) in weight.iter().enumerate() {
+        let mut next: HashMap<u128, u128> =
+            HashMap::with_capacity(strict_dp.len().saturating_mul(2));
+        for (&state, &count) in &strict_dp {
+            enumerate_strip_transitions(packer, &outer, state, strip_size, |transition| {
+                if !coreachable[step + 1].contains(&transition.target)
+                    || !kostka_transition_is_relative_interior(
+                        packer,
+                        step,
+                        state,
+                        &transition,
+                        &tight,
+                    )
+                {
+                    return Ok(());
+                }
+                let entry = next.entry(transition.target).or_insert(0);
+                *entry = entry
+                    .checked_add(count)
+                    .ok_or(KostkaFastError::ArithmeticOverflow)?;
+                Ok(())
+            })?;
+        }
+        interior_peak_states = interior_peak_states.max(next.len());
+        interior_levels.push(next.len());
+        strict_dp = next;
+    }
+
+    Ok(KostkaCountsStats {
+        full,
+        interior: strict_dp.remove(&outer_key).unwrap_or(0),
+        full_peak_states,
+        full_levels,
+        interior_peak_states,
+        interior_levels,
+        full_reachable_levels,
+        strict_lower_constraints: strict_lower,
+        strict_diagonal_constraints: strict_diagonal,
+    })
 }
 
 /// Compute `K_{shape, weight}` and return DP statistics useful for profiling.
@@ -1008,6 +1156,34 @@ fn one_interior_stats() -> KostkaInteriorStats {
     }
 }
 
+fn zero_counts_stats() -> KostkaCountsStats {
+    KostkaCountsStats {
+        full: 0,
+        interior: 0,
+        full_peak_states: 0,
+        full_levels: Vec::new(),
+        interior_peak_states: 0,
+        interior_levels: Vec::new(),
+        full_reachable_levels: Vec::new(),
+        strict_lower_constraints: 0,
+        strict_diagonal_constraints: 0,
+    }
+}
+
+fn one_counts_stats() -> KostkaCountsStats {
+    KostkaCountsStats {
+        full: 1,
+        interior: 1,
+        full_peak_states: 1,
+        full_levels: vec![1],
+        interior_peak_states: 1,
+        interior_levels: vec![1],
+        full_reachable_levels: vec![1],
+        strict_lower_constraints: 0,
+        strict_diagonal_constraints: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1068,6 +1244,23 @@ mod tests {
         assert_eq!(kostka_interior_u128(&[2, 1], &[1, 1, 1]), Ok(0));
         assert_eq!(kostka_interior_u128(&[4, 2], &[2, 2, 1, 1]), Ok(0));
         assert_eq!(kostka_interior_u128(&[6, 4, 2], &[4, 4, 4]), Ok(1));
+    }
+
+    #[test]
+    fn paired_counts_match_separate_kostka_paths() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 2, 2][..]),
+            (&[6, 4, 2][..], &[4, 4, 4][..]),
+            (&[8, 6, 4, 2][..], &[6, 5, 4, 3, 2][..]),
+        ];
+        for (shape, weight) in cases {
+            let counts = kostka_counts_stats(shape, weight).unwrap();
+            assert_eq!(counts.full, kostka_fast_u128(shape, weight).unwrap());
+            assert_eq!(
+                counts.interior,
+                kostka_interior_u128(shape, weight).unwrap()
+            );
+        }
     }
 
     #[test]
