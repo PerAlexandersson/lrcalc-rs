@@ -52,6 +52,18 @@ pub fn lr_stretch_coefficient(
     ))
 }
 
+/// Compute the degree/dimension for `t ↦ c^(t outer)_(t inner, t content)`
+/// without interpolating the h*-vector.
+pub fn lr_stretch_dimension(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<Option<usize>, LrStretchError> {
+    Ok(lrcoef_buch_stretch_cache(outer, inner, content)
+        .map_err(map_lrcoef_error)?
+        .map(|cache| cache.dimension()))
+}
+
 /// Compute the Ehrhart h*-vector for the beta-shifted stretch
 /// `t ↦ beta_lrcoef(t outer, t inner, t content, t beta)`.
 pub fn beta_lr_stretch_h_vector(
@@ -77,6 +89,19 @@ pub fn beta_lr_stretch_coefficient(
         polynomial.dimension,
         stretch,
     ))
+}
+
+/// Compute the degree/dimension of the beta-shifted stretch without
+/// interpolating the h*-vector.
+pub fn beta_lr_stretch_dimension(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<Option<usize>, LrStretchError> {
+    Ok(beta_lrcoef_buch_stretch_cache(outer, inner, content, beta)
+        .map_err(map_lrcoef_error)?
+        .map(|cache| cache.dimension()))
 }
 
 pub fn compute_lr_stretch_polynomial(
@@ -415,6 +440,32 @@ mod tests {
                 "outer={outer:?} inner={inner:?} content={content:?}"
             );
         }
+    }
+
+    #[test]
+    fn stretch_dimension_uses_cache_without_h_vector() {
+        assert_eq!(
+            lr_stretch_dimension(&[3, 2, 1], &[2, 1], &[2, 1]).unwrap(),
+            Some(
+                lrcoef_buch_stretch_cache(&[3, 2, 1], &[2, 1], &[2, 1])
+                    .unwrap()
+                    .expect("nonempty stretch family")
+                    .dimension()
+            )
+        );
+        assert_eq!(
+            beta_lr_stretch_dimension(&[5, 3, 1], &[3, 2, 1], &[2, 1], &[2, 0]).unwrap(),
+            Some(
+                beta_lrcoef_buch_stretch_cache(&[5, 3, 1], &[3, 2, 1], &[2, 1], &[2, 0])
+                    .unwrap()
+                    .expect("nonempty beta stretch family")
+                    .dimension()
+            )
+        );
+        assert_eq!(
+            beta_lr_stretch_dimension(&[5, 1], &[2, 1], &[2, 1], &[]).unwrap(),
+            None
+        );
     }
 
     #[test]

@@ -54,7 +54,9 @@ on representative cases.
 Beta-prefix stretch interpolation passed on 2026-05-16.  The beta stretch cache
 compacts the base skew diagram, stores tight facets and dimension, then samples
 `t*outer/t*inner`, `t*content`, and `t*beta` together.  `beta=[]` specializes to
-the ordinary LR stretch polynomial in tests.
+the ordinary LR stretch polynomial in tests.  Dimension-only stretch commands
+are available for LR and beta-prefix LR, avoiding h*-sampling when only the
+degree is needed.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about

@@ -4,8 +4,9 @@ use lrcalc::kostka_fast::{
     skew_kostka_fast_stats, skew_kostka_fast_u128, KostkaFastError,
 };
 use lrcalc::lr_ehrhart::{
-    beta_lr_stretch_coefficient, beta_lr_stretch_h_vector, format_bigint_vector,
-    format_error as format_lr_stretch_error, lr_stretch_coefficient, lr_stretch_h_vector,
+    beta_lr_stretch_coefficient, beta_lr_stretch_dimension, beta_lr_stretch_h_vector,
+    format_bigint_vector, format_error as format_lr_stretch_error, lr_stretch_coefficient,
+    lr_stretch_dimension, lr_stretch_h_vector,
 };
 use lrcalc::lr_gt::{
     lrcoef_gt_hybrid_stats, lrcoef_gt_interior_dfs_stats, lrcoef_gt_interior_dfs_u128,
@@ -627,6 +628,20 @@ fn main() {
                 }
             }
         }
+        Some("lr-stretch-dimension") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lr_stretch_dimension(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_lr_stretch_error)
+            }) {
+                Ok(Some(dimension)) => println!("{dimension}"),
+                Ok(None) => println!("empty"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Some("lr-stretch-eval") => {
             let rest: Vec<String> = args.collect();
             match parse_stretch_and_triple(&rest).and_then(|(stretch, parts)| {
@@ -651,6 +666,20 @@ fn main() {
                     println!("h_vector: {}", format_bigint_vector(&polynomial.h_vector));
                     println!("sample_points: {:?}", polynomial.sample_points);
                 }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-stretch-dimension") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lr_stretch_dimension(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lr_stretch_error)
+            }) {
+                Ok(Some(dimension)) => println!("{dimension}"),
+                Ok(None) => println!("empty"),
                 Err(message) => {
                     eprintln!("{program}: {message}");
                     std::process::exit(2);

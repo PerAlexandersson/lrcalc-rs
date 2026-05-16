@@ -63,6 +63,7 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-buch-counts 5 3 1 - 3 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-dimension 3 3 2 1 1 - 1 1 - 2 2 1 1 1 1 - 4 3 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-hvector 5 3 1 - 3 2 1 - 2 1 - 2 0
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
