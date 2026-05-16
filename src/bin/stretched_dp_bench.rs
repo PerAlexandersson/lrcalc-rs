@@ -24,6 +24,12 @@ struct ScaledCase {
     content: Vec<i32>,
 }
 
+struct CaseStats {
+    kostka: KostkaCountsStats,
+    lr: LrGtCountsStats,
+    hybrid: LrHybridCountsStats,
+}
+
 fn main() {
     let mut repeat = 5usize;
     let mut max_scale = 3i32;
@@ -115,30 +121,29 @@ fn scaled_cases(max_scale: i32) -> Vec<ScaledCase> {
 
 fn verify_cases(cases: &[ScaledCase]) {
     for case in cases {
-        let kostka = kostka_counts_stats(&case.shape, &case.weight)
-            .unwrap_or_else(|_| panic!("Kostka counts failed for {}", case.label));
-        let lr = lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
-            .unwrap_or_else(|_| panic!("LR GT counts failed for {}", case.label));
-        let hybrid = lrcoef_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
-            .unwrap_or_else(|_| panic!("hybrid LR counts failed for {}", case.label));
-        assert_eq!(kostka.full, lr.full, "full mismatch for {}", case.label);
+        let stats = case_stats(case);
         assert_eq!(
-            kostka.interior, lr.interior,
+            stats.kostka.full, stats.lr.full,
+            "full mismatch for {}",
+            case.label
+        );
+        assert_eq!(
+            stats.kostka.interior, stats.lr.interior,
             "interior mismatch for {}",
             case.label
         );
         assert_eq!(
-            kostka.full, hybrid.counts.full,
+            stats.kostka.full, stats.hybrid.counts.full,
             "hybrid full mismatch for {}",
             case.label
         );
         assert_eq!(
-            kostka.interior, hybrid.counts.interior,
+            stats.kostka.interior, stats.hybrid.counts.interior,
             "hybrid interior mismatch for {}",
             case.label
         );
         assert_eq!(
-            hybrid.mode,
+            stats.hybrid.mode,
             LrHybridCountsMode::KostkaTranslation,
             "hybrid missed Kostka translation for {}",
             case.label
@@ -152,34 +157,34 @@ fn print_case_stats(cases: &[ScaledCase]) {
         "case\tfull\tinterior\tk_full_peak\tk_int_peak\tlr_full_peak\tlr_int_peak\thybrid_mode\thybrid_full_peak\thybrid_int_peak"
     );
     for case in cases {
-        let kostka = kostka_counts_stats(&case.shape, &case.weight)
-            .unwrap_or_else(|_| panic!("Kostka counts failed for {}", case.label));
-        let lr = lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
-            .unwrap_or_else(|_| panic!("LR GT counts failed for {}", case.label));
-        let hybrid = lrcoef_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
-            .unwrap_or_else(|_| panic!("hybrid LR counts failed for {}", case.label));
-        print_stats(case, &kostka, &lr, &hybrid);
+        print_stats(case, &case_stats(case));
     }
 }
 
-fn print_stats(
-    case: &ScaledCase,
-    kostka: &KostkaCountsStats,
-    lr: &LrGtCountsStats,
-    hybrid: &LrHybridCountsStats,
-) {
+fn case_stats(case: &ScaledCase) -> CaseStats {
+    CaseStats {
+        kostka: kostka_counts_stats(&case.shape, &case.weight)
+            .unwrap_or_else(|_| panic!("Kostka counts failed for {}", case.label)),
+        lr: lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("LR GT counts failed for {}", case.label)),
+        hybrid: lrcoef_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("hybrid LR counts failed for {}", case.label)),
+    }
+}
+
+fn print_stats(case: &ScaledCase, stats: &CaseStats) {
     println!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         case.label,
-        kostka.full,
-        kostka.interior,
-        kostka.full_peak_states,
-        kostka.interior_peak_states,
-        lr.full_peak_states,
-        lr.interior_peak_states,
-        hybrid_mode_name(hybrid.mode),
-        hybrid.counts.full_peak_states,
-        hybrid.counts.interior_peak_states
+        stats.kostka.full,
+        stats.kostka.interior,
+        stats.kostka.full_peak_states,
+        stats.kostka.interior_peak_states,
+        stats.lr.full_peak_states,
+        stats.lr.interior_peak_states,
+        stats.hybrid.mode.label(),
+        stats.hybrid.counts.full_peak_states,
+        stats.hybrid.counts.interior_peak_states
     );
 }
 
@@ -203,13 +208,6 @@ fn scale_parts(parts: &[i32], scale: i32) -> Vec<i32> {
 
 fn format_duration(duration: Duration) -> String {
     format!("{:.6}s", duration.as_secs_f64())
-}
-
-fn hybrid_mode_name(mode: LrHybridCountsMode) -> &'static str {
-    match mode {
-        LrHybridCountsMode::KostkaTranslation => "kostka",
-        LrHybridCountsMode::GtChain => "gt",
-    }
 }
 
 const BASE_CASES: &[BaseCase] = &[

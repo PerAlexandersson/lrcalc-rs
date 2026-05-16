@@ -56,8 +56,8 @@ timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 ```
 
 Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
-`924x` slower than packed Kostka counts on the translated suite, while the
-hybrid LR path is about `1.05x` the Kostka time and keeps matching full and
+`911x` slower than packed Kostka counts on the translated suite, while the
+hybrid LR path is about `1.01x` the Kostka time and keeps matching full and
 interior counts.
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`

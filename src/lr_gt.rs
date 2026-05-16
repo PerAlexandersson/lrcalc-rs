@@ -68,6 +68,15 @@ pub enum LrHybridCountsMode {
     GtChain,
 }
 
+impl LrHybridCountsMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::KostkaTranslation => "kostka",
+            Self::GtChain => "gt",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LrHybridCountsStats {
     pub mode: LrHybridCountsMode,

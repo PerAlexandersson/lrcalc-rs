@@ -37,9 +37,9 @@ engines.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
-`924x` slower than packed Kostka DP on the scaled Kostka-translation suite.
+`911x` slower than packed Kostka DP on the scaled Kostka-translation suite.
 The hybrid LR path recognized every case as `kostka` mode and ran at about
-`1.05x` the packed Kostka time, with matching full and interior counts.
+`1.01x` the packed Kostka time, with matching full and interior counts.
 
 ## Main Gaps
 
