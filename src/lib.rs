@@ -14,5 +14,6 @@ pub mod lr_gt;
 pub mod lr_signed;
 pub mod lrcoef;
 pub mod partition;
+pub mod schur;
 
-pub use abi::{iv_free, iv_hash, iv_new, iv_new_copy, iv_new_zero, IVector};
+pub use abi::{iv_free, iv_hash, iv_new, iv_new_copy, iv_new_zero, ivlc_free_all, IVector};

@@ -12,8 +12,11 @@ upstream C.
 
 - `liblrcalc` library target configured as `cdylib`, `staticlib`, and `rlib`.
 - C-facing `ivector` allocation/copy/hash/sum functions.
-- C ABI export for `schur_lrcoef`.
-- `lrcalc coef` / `lrcalc lrcoef` CLI command.
+- C-facing `ivlincomb` allocation, insertion, lookup, iteration, and
+  ownership cleanup functions.
+- C ABI exports for `schur_lrcoef`, `schur_mult`, and `schur_skew`.
+- `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, and `lrcalc skew` CLI
+  commands.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
@@ -32,9 +35,10 @@ upstream C.
 
 ## Not Yet Implemented
 
-- `ivlincomb` storage, iteration, and ownership-compatible C ABI.
-- Schur product, skew Schur expansion, coproduct, fusion, and quantum product
-  ABI functions.
+- Optimized shared-output tableau expansion for `schur_mult` and `schur_skew`;
+  the current implementation is correct-first and reuses scalar LR
+  coefficients.
+- Schur coproduct, fusion, and quantum product ABI functions.
 - LR tableau iterator ABI.
 - Schubert polynomial ABI and `schubmult` compatibility.
 - Installed compatibility headers.
@@ -54,6 +58,8 @@ The Rust library target is named `lrcalc`, so release builds should produce
 
 ```bash
 timeout 60s nice -n 10 cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- mult 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- skew 3 2 1 / 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1

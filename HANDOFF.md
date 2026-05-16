@@ -11,7 +11,12 @@ engines.
 - Rust crate builds as `liblrcalc` (`cdylib`, `staticlib`, `rlib`) plus a
   `lrcalc` binary.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
-  `schur_lrcoef`.
+  the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
+  It also exports `schur_lrcoef`, `schur_mult`, and `schur_skew`.
+- `src/schur.rs` contains correctness-first Schur product and skew Schur
+  expansion.  It enumerates bounded output partitions and reuses scalar
+  `lrcoef`; this is ABI-correct for small/medium cases but not yet Buch's
+  shared tableau expansion algorithm.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -27,9 +32,9 @@ engines.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
 - `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families
   and beta-prefix stretched families.
-- CLI commands expose the coefficient engines, beta-prefix LR counts, and
-  diagnostic/stat modes, but not upstream `mult`, `skew`, `coprod`, `tab`, or
-  `schubmult` behavior.
+- CLI commands expose the coefficient engines, beta-prefix LR counts,
+  diagnostic/stat modes, and ordinary upstream-style `mult` and `skew`.
+  `coprod`, fusion/quantum, `tab`, and `schubmult` are still missing.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -44,7 +49,12 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-59 library tests, all benchmark-bin test targets, and doc-tests.
+72 library tests, all benchmark-bin test targets, and doc-tests.
+
+Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
+CLI agrees with upstream C after sorting output lines for:
+`mult 2 1 - 2 1` and `skew 3 2 1 / 2 1`.  CLI line order is not yet treated
+as a compatibility guarantee.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
@@ -77,9 +87,10 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 
 ## Main Gaps
 
-- Implement `ivlincomb` ABI storage and iterators.
-- Implement C ABI functions for Schur product, skew, coproduct, fusion/quantum,
-  LR tableau iteration, and Schubert products.
+- Replace the scalar-loop Schur product/skew implementation with a shared
+  expansion iterator/DP when performance matters.
+- Implement C ABI functions for Schur coproduct, fusion/quantum, LR tableau
+  iteration, and Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.
@@ -88,10 +99,9 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 
 ## Next Useful Work
 
-- Build the minimal `ivlincomb` ABI needed by Python: allocation, insertion,
-  iteration, and `ivlc_free_all`.
-- Implement `schur_skew` or `schur_mult` next, using the existing LR/Kostka
-  engines and returning `ivlincomb`.
+- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, and `schur_skew`.
+- Add an output-order decision for the CLI: either document unordered output or
+  mimic upstream hash iteration more closely.
 - Add an `nm`-based exported-symbol check for P0/P1 ABI coverage.
 - Run `scripts/lrcoef_timed_suite.sh` and the Kostka/LR benchmark scripts
   against a freshly built upstream C binary.

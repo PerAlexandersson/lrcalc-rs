@@ -21,6 +21,9 @@ use lrcalc::lrcoef::{
     lrcoef_buch_interior_memo_u128, lrcoef_buch_interior_stats, lrcoef_buch_interior_u128,
     LrBuchInteriorStats, LrCoefError,
 };
+use lrcalc::schur::{
+    schur_product_expansion, schur_skew_expansion, SchurExpansionError, SchurTerm,
+};
 
 fn main() {
     let mut args = std::env::args();
@@ -35,6 +38,34 @@ fn main() {
                 lrcoef(&parts[0], &parts[1], &parts[2]).map_err(format_lrcoef_error)
             }) {
                 Ok(coef) => println!("{coef}"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("mult") => {
+            let rest: Vec<String> = args.collect();
+            match parse_mult_args(&rest).and_then(|parsed| {
+                schur_product_expansion(&parsed.left, &parsed.right, parsed.rows, parsed.cols)
+                    .map(|terms| (terms, parsed.maple))
+                    .map_err(format_schur_error)
+            }) {
+                Ok((terms, maple)) => print_schur_terms(&terms, maple),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("skew") => {
+            let rest: Vec<String> = args.collect();
+            match parse_skew_args(&rest).and_then(|parsed| {
+                schur_skew_expansion(&parsed.outer, &parsed.inner, parsed.rows)
+                    .map(|terms| (terms, parsed.maple))
+                    .map_err(format_schur_error)
+            }) {
+                Ok((terms, maple)) => print_schur_terms(&terms, maple),
                 Err(message) => {
                     eprintln!("{program}: {message}");
                     std::process::exit(2);
@@ -710,6 +741,115 @@ fn main() {
     }
 }
 
+struct MultArgs {
+    left: Vec<i32>,
+    right: Vec<i32>,
+    rows: i32,
+    cols: i32,
+    maple: bool,
+}
+
+struct SkewArgs {
+    outer: Vec<i32>,
+    inner: Vec<i32>,
+    rows: i32,
+    maple: bool,
+}
+
+fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
+    let mut rows = -1;
+    let mut cols = -1;
+    let mut maple = false;
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-m" => {
+                maple = true;
+                index += 1;
+            }
+            "-r" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -r".to_string())?;
+                rows = parse_i32_option(value, "rows")?;
+                index += 2;
+            }
+            "-c" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -c".to_string())?;
+                cols = parse_i32_option(value, "cols")?;
+                index += 2;
+            }
+            "-q" | "-f" => {
+                return Err(
+                    "quantum/fusion Schur multiplication is not implemented yet".to_string()
+                );
+            }
+            token => {
+                parts.push(token.to_string());
+                index += 1;
+            }
+        }
+    }
+    let [left, right] = parse_partition_pair_with_separator(
+        &parts,
+        "-",
+        "usage: mult [-m] [-r rows] [-c cols] PART1 - PART2",
+    )?;
+    Ok(MultArgs {
+        left,
+        right,
+        rows,
+        cols,
+        maple,
+    })
+}
+
+fn parse_skew_args(args: &[String]) -> Result<SkewArgs, String> {
+    let mut rows = -1;
+    let mut maple = false;
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-m" => {
+                maple = true;
+                index += 1;
+            }
+            "-r" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -r".to_string())?;
+                rows = parse_i32_option(value, "rows")?;
+                index += 2;
+            }
+            token => {
+                parts.push(token.to_string());
+                index += 1;
+            }
+        }
+    }
+    let [outer, inner] = parse_partition_pair_with_separator(
+        &parts,
+        "/",
+        "usage: skew [-m] [-r rows] OUTER / INNER",
+    )?;
+    Ok(SkewArgs {
+        outer,
+        inner,
+        rows,
+        maple,
+    })
+}
+
+fn parse_i32_option(value: &str, name: &str) -> Result<i32, String> {
+    value
+        .parse::<i32>()
+        .map_err(|_| format!("invalid {name} value '{value}'"))
+}
+
 fn parse_partition_triple(args: &[String]) -> Result<[Vec<i32>; 3], String> {
     let mut parts = [Vec::new(), Vec::new(), Vec::new()];
     let mut section = 0usize;
@@ -797,14 +937,22 @@ fn parse_stretch_and_quad(args: &[String]) -> Result<(u64, [Vec<i32>; 4]), Strin
 }
 
 fn parse_partition_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {
+    parse_partition_pair_with_separator(args, "-", "usage: kostka-lr SHAPE - WEIGHT")
+}
+
+fn parse_partition_pair_with_separator(
+    args: &[String],
+    separator: &str,
+    usage: &str,
+) -> Result<[Vec<i32>; 2], String> {
     let mut parts = [Vec::new(), Vec::new()];
     let mut section = 0usize;
 
     for token in args {
-        if token == "-" {
+        if token == separator {
             section += 1;
             if section >= parts.len() {
-                return Err("expected exactly one '-' separator".to_string());
+                return Err(format!("expected exactly one '{separator}' separator"));
             }
             continue;
         }
@@ -822,7 +970,7 @@ fn parse_partition_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {
     }
 
     if section != 1 {
-        return Err("usage: kostka-lr SHAPE - WEIGHT".to_string());
+        return Err(usage.to_string());
     }
 
     Ok(parts)
@@ -837,6 +985,37 @@ fn format_partition(partition: &[i32]) -> String {
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn print_schur_terms(terms: &[SchurTerm], maple: bool) {
+    if maple {
+        print!("0");
+        for term in terms {
+            print!(
+                "+{}*s[{}]",
+                term.coefficient,
+                format_comma_partition(&term.partition)
+            );
+        }
+        println!();
+        return;
+    }
+
+    for term in terms {
+        println!(
+            "{}  ({})",
+            term.coefficient,
+            format_comma_partition(&term.partition)
+        );
+    }
+}
+
+fn format_comma_partition(partition: &[i32]) -> String {
+    partition
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn format_optional_usize(value: Option<usize>) -> String {
@@ -869,6 +1048,13 @@ fn format_lrcoef_error(error: LrCoefError) -> String {
     match error {
         LrCoefError::InvalidPartition => "invalid partition".to_string(),
         LrCoefError::ArithmeticOverflow => "arithmetic overflow".to_string(),
+    }
+}
+
+fn format_schur_error(error: SchurExpansionError) -> String {
+    match error {
+        SchurExpansionError::InvalidPartition => "invalid partition".to_string(),
+        SchurExpansionError::ArithmeticOverflow => "arithmetic overflow".to_string(),
     }
 }
 
