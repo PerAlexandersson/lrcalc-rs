@@ -15,8 +15,10 @@ engines.
   It also exports `schur_lrcoef`, `schur_mult`, and `schur_skew`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   still enumerates bounded output partitions and reuses scalar `lrcoef`.
-  Skew expansion uses the variable-content beta tableau enumerator with
-  `beta=[]`, so all output contents are accumulated in one search.
+  Skew expansion now first applies an upstream-style `optim_skew` shape
+  reduction, folds forced components into a beta prefix, and then uses the
+  variable-content beta tableau enumerator so all residual contents are
+  accumulated in one search.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -49,7 +51,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-72 library tests, all benchmark-bin test targets, and doc-tests.
+93 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -60,6 +62,13 @@ Variable-content beta expansion passed on 2026-05-16.  With `beta=[]`, it
 matches the Schur expansion coefficients for a representative skew shape.  With
 a uniformly dominant finite `beta`, it matches skew Kostka counts over all
 weights of a fixed label bound.
+
+Optimized skew expansion passed on 2026-05-16.  The regression test exhausts
+all contained skew shapes of outer size at most `7` and row bounds
+`[-1, 0, 1, 2, 3, 4]`, comparing the optimized path with scalar LR expansion.
+On `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both took about
+`0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust improved from
+about `7.2s` to `4.1s`; upstream C took about `1.4s`.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
@@ -94,6 +103,10 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 
 - Replace the scalar-loop Schur product implementation with a shared expansion
   iterator/DP when performance matters.
+- Continue low-level skew expansion tuning.  The high-level algorithm now
+  matches upstream more closely, but dense cases still trail upstream C because
+  the Rust path lacks the exact tight `lrit_next`-style iterator and packed
+  output accumulator.
 - Implement C ABI functions for Schur coproduct, fusion/quantum, LR tableau
   iteration, and Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
@@ -110,8 +123,9 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 - Add an `nm`-based exported-symbol check for P0/P1 ABI coverage.
 - Run `scripts/lrcoef_timed_suite.sh` and the Kostka/LR benchmark scripts
   against a freshly built upstream C binary.
-- Add a broader skew Kostka corpus, especially larger sparse skew shapes and
-  repeated fixed-shape weights that can reuse `FastSkewKostkaEngine`.
+- Add a broader skew expansion corpus, especially shapes where `optim_skew`
+  removes large forced components and dense shapes where accumulator overhead
+  dominates.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
 - Benchmark the production tableau paired selector on a broader non-Kostka

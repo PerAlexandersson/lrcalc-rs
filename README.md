@@ -23,6 +23,8 @@ upstream C.
   virtual Yamanouchi prefix `beta`, including paired full/interior counts.
 - Variable-content beta-prefix expansion, used by skew Schur expansion with
   `beta=[]` and by skew Kostka weight expansion with dominant finite `beta`.
+- Upstream-style skew-shape optimization for skew Schur expansion, folding
+  forced components into the beta prefix before the shared content expansion.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -90,6 +92,12 @@ interior counts.
 
 Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
 about `180x` faster than an upstream-C repeated Schur multiplication baseline.
+
+Current optimized skew expansion snapshot: on
+`skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both take about
+`0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust takes about
+`4.1s` versus upstream C at about `1.4s`; before the optimizer and accumulator
+reuse the Rust path took about `7.2s`.
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
 binary via `UPSTREAM_BIN`; see each script's help text before running.

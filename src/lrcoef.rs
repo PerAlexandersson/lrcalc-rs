@@ -4,7 +4,7 @@
 //! `lrcalc`: first compact the triple with `optim_coef`, then count LR
 //! tableaux with the branch-pruned search from `lrcoef_count`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -208,22 +208,27 @@ pub fn beta_lr_content_expansion(
         }]);
     }
 
-    let mut terms = BTreeMap::<Vec<i32>, u128>::new();
+    let mut terms = HashMap::<Vec<i32>, u128>::new();
     beta_lrcoef_for_each_content(&shape, |content| {
-        let entry = terms.entry(content.to_vec()).or_insert(0);
-        *entry = entry
-            .checked_add(1)
-            .ok_or(LrCoefError::ArithmeticOverflow)?;
+        if let Some(entry) = terms.get_mut(content) {
+            *entry = entry
+                .checked_add(1)
+                .ok_or(LrCoefError::ArithmeticOverflow)?;
+        } else {
+            terms.insert(content.to_vec(), 1);
+        }
         Ok(())
     })?;
 
-    Ok(terms
+    let mut terms = terms
         .into_iter()
         .map(|(content, coefficient)| BetaLrContentTerm {
             content,
             coefficient,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    terms.sort_by(|left, right| left.content.cmp(&right.content));
+    Ok(terms)
 }
 
 /// Count relative interior lattice points for the beta-shifted LR polytope.
@@ -1761,8 +1766,8 @@ where
         } else {
             boxes[pos].value = x;
             place_content_label(x, &mut total_counts, &mut content_counts)?;
-            let content = trim_content_counts(&content_counts[1..]);
-            visit(&content)?;
+            let content = trimmed_content_slice(&content_counts[1..]);
+            visit(content)?;
             unplace_content_label(x, &mut total_counts, &mut content_counts);
             x -= 1;
         }
@@ -1804,12 +1809,17 @@ fn unplace_content_label(label: i32, total_counts: &mut [i32], content_counts: &
     content_counts[index] -= 1;
 }
 
+#[cfg(test)]
 fn trim_content_counts(content: &[i32]) -> Vec<i32> {
+    trimmed_content_slice(content).to_vec()
+}
+
+fn trimmed_content_slice(content: &[i32]) -> &[i32] {
     let len = content
         .iter()
         .rposition(|&part| part != 0)
         .map_or(0, |index| index + 1);
-    content[..len].to_vec()
+    &content[..len]
 }
 
 fn lrcoef_count_strict_tableaux(
@@ -2843,7 +2853,7 @@ mod tests {
         let mut actual = terms
             .into_iter()
             .map(|term| (term.content, term.coefficient))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<std::collections::BTreeMap<_, _>>();
 
         for content in compositions_of_fixed_length(skew_size, max_labels) {
             let trimmed = trim_content_counts(&content);
