@@ -35,7 +35,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-44 library tests, all benchmark-bin test targets, and doc-tests.
+47 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -68,8 +68,11 @@ The hybrid LR path recognized every case as `kostka` mode and ran at about
 - Extend the hybrid LR fast paths beyond exact row-diagonal Kostka
   translations, guided by state-count gaps in `stretched_dp_bench`.
 - Use `notes/PARTIAL_KOSTKA_COLLAPSE.md` to guide a certified partial-mask
-  fast path.  Current evidence suggests low-row masks plus defect closure, not
-  defect rows alone.
+  fast path.  Current evidence suggests low-row masks from the last
+  diagonal-concatenation defect, with all-row fallback when the certificate
+  fails.
+- Combine `lrcoef_gt_partial_collapse_stats` with the exact Kostka dispatch
+  before using it in a public hybrid full-count selector.
 
 ## Notes
 

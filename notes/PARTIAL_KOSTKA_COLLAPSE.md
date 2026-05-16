@@ -10,10 +10,16 @@ then the omitted prefix rows are unnecessary for that coefficient.
 ## Current Hook
 
 - `src/lr_gt.rs`: `lrcoef_gt_yamanouchi_mask_stats`
+- `src/lr_gt.rs`: `lrcoef_gt_yamanouchi_mask_certified_stats`
+- `src/lr_gt.rs`: `lrcoef_gt_partial_collapse_rows`
+- `src/lr_gt.rs`: `lrcoef_gt_partial_collapse_stats`
 - `src/bin/partial_collapse_probe.rs`: small diagnostic suite
 
 The all-row mask agrees with the usual LR count on all small triples tested.
 Smaller masks are relaxations and can overcount.
+The certified variant gives a sufficient condition: if every omitted
+Yamanouchi inequality is forced on the relaxed reachable transitions, the
+masked count is exact.
 
 ## Probe Result
 
@@ -25,32 +31,43 @@ timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 
 Observed on 2026-05-16:
 
-| case | rows | LR value | all peak | empty value | empty peak | best mask | best peak |
-|---|---:|---:|---:|---:|---:|---|---:|
-| exact tiny | 3 | 2 | 7 | 15 | 7 | `0,1` | 7 |
-| exact sparse | 4 | 4 | 11 | 25 | 11 | `0,1` | 11 |
-| exact medium x2 | 5 | 106 | 2225 | 109115 | 411 | `0,1,2,3` | 1429 |
-| one tail defect | 2 | 1 | 2 | 2 | 2 | `0` | 2 |
-| left extension defect | 4 | 4 | 8 | 14 | 6 | `0,1` | 6 |
-| right gap defect | 4 | 2 | 8 | 19 | 8 | `0,1` | 8 |
-| irregular mixed | 7 | 56 | 84 | 929 | 54 | `0,1,2,3,4` | 76 |
+| case | rows | LR value | all peak | candidate | candidate value | certified | safe mode | safe peak |
+|---|---:|---:|---:|---|---:|---|---|---:|
+| exact tiny | 3 | 2 | 7 | `-` | 15 | false | gt-fallback | 3 |
+| exact sparse | 4 | 4 | 11 | `-` | 25 | false | gt-fallback | 9 |
+| exact medium x2 | 5 | 106 | 2225 | `-` | 109115 | false | gt-fallback | 1644 |
+| one tail defect | 2 | 1 | 2 | `0` | 1 | true | certified-mask | 2 |
+| left extension defect | 4 | 4 | 8 | `0,1` | 4 | true | certified-mask | 6 |
+| right gap defect | 4 | 2 | 8 | `0,1` | 2 | true | certified-mask | 8 |
+| irregular mixed | 7 | 56 | 84 | `0,1,2,3,4` | 56 | true | certified-mask | 76 |
+
+Small survey through outer size `8`:
+
+- triples: `4136`
+- nonempty candidates: `3298`
+- exact candidates: `3278`
+- improved exact candidates: `5`
+- certified candidates: `3214`
+- certified inexact candidates: `0`
+- certified improved candidates: `5`
 
 ## Takeaway
 
-Exact Kostka translations should keep using the direct packed Kostka dispatch.
-The masked DP is not as strong there.
+Exact Kostka translations should keep using the direct packed Kostka dispatch
+from the hybrid path.  The masked DP is not as strong there, and the certificate
+correctly rejects the empty-mask relaxation.
 
 For near-Kostka shapes, the useful pattern is different: low row masks often
-recover the LR coefficient while dropping some prefix coordinates.  The simple
-defect-row mask is not sufficient by itself; the closure seems to include rows
-above the first defect, especially rows `0` and `1`.
+recover the LR coefficient while dropping some prefix coordinates.  A simple
+candidate based on the last diagonal-concatenation defect matches the tested
+near-Kostka examples and is certified on the diagnostic cases above.
 
 ## Next Step
 
 Turn the probe into a safe heuristic:
 
-1. Build a candidate mask from low rows plus the defect closure.
-2. Run the masked DP and a cheap certificate on small/medium cases.
-3. Use all-row GT fallback when the mask is not certified.
-4. Extend the same idea to paired full/interior counts only after the full-count
+1. Benchmark the certified candidate on larger near-Kostka families.
+2. Combine the certified full-count path with the exact Kostka dispatch in the
+   public hybrid selector.
+3. Extend the same idea to paired full/interior counts only after the full-count
    mask behavior is stable.

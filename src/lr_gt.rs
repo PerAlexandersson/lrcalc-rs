@@ -36,6 +36,34 @@ pub struct LrGtYamanouchiMaskStats {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrGtYamanouchiMaskCertifiedStats {
+    pub stats: LrGtYamanouchiMaskStats,
+    pub omitted_constraints_forced: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LrGtPartialCollapseMode {
+    CertifiedMask,
+    GtChainFallback,
+}
+
+impl LrGtPartialCollapseMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CertifiedMask => "certified-mask",
+            Self::GtChainFallback => "gt-fallback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrGtPartialCollapseStats {
+    pub mode: LrGtPartialCollapseMode,
+    pub enforced_rows: Vec<usize>,
+    pub stats: LrGtStats,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LrGtInteriorStats {
     pub value: u128,
     pub peak_states: usize,
@@ -111,6 +139,12 @@ struct TightFlags {
     lower: Vec<Vec<bool>>,
     diagonal: Vec<Vec<bool>>,
     yamanouchi: Vec<Vec<bool>>,
+}
+
+#[derive(Clone, Debug)]
+struct MaskDpValue {
+    count: u128,
+    min_prefixes: Vec<u32>,
 }
 
 /// Compute the Littlewood-Richardson coefficient `c^outer_{inner, content}`.
@@ -221,6 +255,65 @@ pub fn lrcoef_gt_yamanouchi_mask_stats(
     enforced_rows: &[usize],
 ) -> Result<LrGtYamanouchiMaskStats, LrGtError> {
     lrcoef_gt_yamanouchi_mask_stats_raw(outer, inner, content, enforced_rows)
+}
+
+/// Count with a row-masked Yamanouchi DP and report a sufficient certificate.
+///
+/// If `omitted_constraints_forced` is true, then every omitted Yamanouchi
+/// inequality held automatically on all relaxed reachable transitions, so the
+/// masked count is the ordinary LR count.
+pub fn lrcoef_gt_yamanouchi_mask_certified_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    enforced_rows: &[usize],
+) -> Result<LrGtYamanouchiMaskCertifiedStats, LrGtError> {
+    lrcoef_gt_yamanouchi_mask_certified_stats_raw(outer, inner, content, enforced_rows)
+}
+
+/// Candidate rows for partial Kostka collapse.
+///
+/// Empty output means either an exact Kostka translation, where the direct
+/// Kostka fast path is better, or a case where this simple defect heuristic has
+/// no useful row to enforce.
+pub fn lrcoef_gt_partial_collapse_rows(
+    outer: &[i32],
+    inner: &[i32],
+) -> Result<Vec<usize>, LrGtError> {
+    let outer = normalize_partition(outer)?;
+    let inner = normalize_partition(inner)?;
+    Ok(partial_collapse_rows_normalized(&outer, &inner))
+}
+
+/// Safe full-count partial-collapse path.
+///
+/// The candidate masked DP is used only when the omitted Yamanouchi
+/// inequalities are certified as forced.  Otherwise this falls back to the
+/// ordinary GT-chain LR count.
+pub fn lrcoef_gt_partial_collapse_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrGtPartialCollapseStats, LrGtError> {
+    let candidate = lrcoef_gt_partial_collapse_rows(outer, inner)?;
+    let certified = lrcoef_gt_yamanouchi_mask_certified_stats(outer, inner, content, &candidate)?;
+    if certified.omitted_constraints_forced {
+        return Ok(LrGtPartialCollapseStats {
+            mode: LrGtPartialCollapseMode::CertifiedMask,
+            enforced_rows: candidate,
+            stats: LrGtStats {
+                value: certified.stats.value,
+                peak_states: certified.stats.peak_states,
+                levels: certified.stats.levels,
+            },
+        });
+    }
+
+    Ok(LrGtPartialCollapseStats {
+        mode: LrGtPartialCollapseMode::GtChainFallback,
+        enforced_rows: candidate,
+        stats: lrcoef_gt_stats(outer, inner, content)?,
+    })
 }
 
 /// Count relative interior lattice points with DP state-count statistics.
@@ -541,6 +634,138 @@ fn lrcoef_gt_yamanouchi_mask_stats_raw(
         levels,
         enforced_rows,
     })
+}
+
+fn lrcoef_gt_yamanouchi_mask_certified_stats_raw(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    enforced_rows: &[usize],
+) -> Result<LrGtYamanouchiMaskCertifiedStats, LrGtError> {
+    let outer = normalize_partition(outer)?;
+    let inner = normalize_partition(inner)?;
+    let content = normalize_partition(content)?;
+
+    let outer_size = checked_sum(&outer)?;
+    let inner_size = checked_sum(&inner)?;
+    let content_size = checked_sum(&content)?;
+    let rows = outer.len();
+    let enforced_rows = normalize_enforced_rows(enforced_rows, rows)?;
+
+    if inner_size > outer_size || !partition_less_equal(&inner, &outer) {
+        return Ok(certified_stats(
+            zero_yamanouchi_mask_stats(enforced_rows),
+            true,
+        ));
+    }
+    if outer_size - inner_size != content_size {
+        return Ok(certified_stats(
+            zero_yamanouchi_mask_stats(enforced_rows),
+            true,
+        ));
+    }
+    if content_size == 0 {
+        return Ok(if trim_eq(&outer, &inner) {
+            certified_stats(one_yamanouchi_mask_stats(enforced_rows), true)
+        } else {
+            certified_stats(zero_yamanouchi_mask_stats(enforced_rows), true)
+        });
+    }
+    if rows == 0 {
+        return Ok(certified_stats(
+            zero_yamanouchi_mask_stats(enforced_rows),
+            true,
+        ));
+    }
+
+    let row_to_slot = row_to_prefix_slot(rows, &enforced_rows);
+    let enforced = enforced_row_flags(rows, &enforced_rows);
+    let partition_packer = Packer::new(bit_width(*outer.first().unwrap_or(&0)), rows)?;
+    let prefix_packer = Packer::new(bit_width(content_size), enforced_rows.len())?;
+    let inner_key = partition_packer.pack_padded(&inner)?;
+    let outer_key = partition_packer.pack(&outer)?;
+
+    let mut dp: HashMap<State, MaskDpValue> = HashMap::new();
+    dp.insert(
+        (inner_key, 0),
+        MaskDpValue {
+            count: 1,
+            min_prefixes: vec![0; rows],
+        },
+    );
+    let mut peak_states = dp.len();
+    let mut levels = vec![dp.len()];
+    let mut omitted_constraints_forced = true;
+
+    for (step, &strip_size) in content.iter().enumerate() {
+        let mut next: HashMap<State, MaskDpValue> =
+            HashMap::with_capacity(dp.len().saturating_mul(2));
+        for (&state, value) in &dp {
+            enumerate_masked_yamanouchi_extensions(
+                partition_packer,
+                prefix_packer,
+                &outer,
+                &row_to_slot,
+                state.0,
+                strip_size,
+                previous_prefix_key(step, state),
+                |target| {
+                    let (prefixes_before, prefixes_after) =
+                        transition_prefix_bounds(partition_packer, state.0, target.0, rows)?;
+                    if step > 0
+                        && omitted_constraints_forced
+                        && omitted_yamanouchi_can_fail(
+                            &enforced,
+                            &prefixes_after,
+                            &value.min_prefixes,
+                        )
+                    {
+                        omitted_constraints_forced = false;
+                    }
+
+                    match next.entry(target) {
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            let entry_value = entry.get_mut();
+                            entry_value.count = entry_value
+                                .count
+                                .checked_add(value.count)
+                                .ok_or(LrGtError::ArithmeticOverflow)?;
+                            minimize_prefixes(&mut entry_value.min_prefixes, &prefixes_before);
+                        }
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(MaskDpValue {
+                                count: value.count,
+                                min_prefixes: prefixes_before,
+                            });
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        peak_states = peak_states.max(next.len());
+        levels.push(next.len());
+        dp = next;
+    }
+
+    let mut result = 0u128;
+    for ((partition_key, _), value) in dp {
+        if partition_key == outer_key {
+            result = result
+                .checked_add(value.count)
+                .ok_or(LrGtError::ArithmeticOverflow)?;
+        }
+    }
+
+    Ok(certified_stats(
+        LrGtYamanouchiMaskStats {
+            value: result,
+            peak_states,
+            levels,
+            enforced_rows,
+        },
+        omitted_constraints_forced,
+    ))
 }
 
 fn lrcoef_gt_interior_dfs_stats_compacted(
@@ -923,6 +1148,84 @@ fn row_to_prefix_slot(rows: usize, enforced_rows: &[usize]) -> Vec<Option<usize>
         slots[row] = Some(slot);
     }
     slots
+}
+
+fn enforced_row_flags(rows: usize, enforced_rows: &[usize]) -> Vec<bool> {
+    let mut flags = vec![false; rows];
+    for &row in enforced_rows {
+        flags[row] = true;
+    }
+    flags
+}
+
+fn partial_collapse_rows_normalized(outer: &[u32], inner: &[u32]) -> Vec<usize> {
+    let rows = outer.len();
+    let Some(last_defect) =
+        (0..rows).rfind(|&row| part_u32(inner, row) != part_u32(outer, row + 1))
+    else {
+        return Vec::new();
+    };
+
+    let mut end = last_defect;
+    if last_defect + 1 < rows && part_u32(inner, last_defect) > part_u32(outer, last_defect + 1) {
+        end += 1;
+    }
+
+    (0..end).collect()
+}
+
+fn part_u32(parts: &[u32], index: usize) -> u32 {
+    parts.get(index).copied().unwrap_or(0)
+}
+
+fn certified_stats(
+    stats: LrGtYamanouchiMaskStats,
+    omitted_constraints_forced: bool,
+) -> LrGtYamanouchiMaskCertifiedStats {
+    LrGtYamanouchiMaskCertifiedStats {
+        stats,
+        omitted_constraints_forced,
+    }
+}
+
+fn transition_prefix_bounds(
+    partition_packer: Packer,
+    source_key: u128,
+    target_key: u128,
+    rows: usize,
+) -> Result<(Vec<u32>, Vec<u32>), LrGtError> {
+    let mut before = Vec::with_capacity(rows);
+    let mut after = Vec::with_capacity(rows);
+    let mut prefix = 0u32;
+    for row in 0..rows {
+        before.push(prefix);
+        let source = partition_packer.get(source_key, row);
+        let target = partition_packer.get(target_key, row);
+        let increment = target.checked_sub(source).ok_or(LrGtError::InvalidInput)?;
+        prefix = prefix
+            .checked_add(increment)
+            .ok_or(LrGtError::ArithmeticOverflow)?;
+        after.push(prefix);
+    }
+    Ok((before, after))
+}
+
+fn omitted_yamanouchi_can_fail(
+    enforced: &[bool],
+    current_prefixes: &[u32],
+    previous_min_prefixes: &[u32],
+) -> bool {
+    enforced
+        .iter()
+        .zip(current_prefixes)
+        .zip(previous_min_prefixes)
+        .any(|((&is_enforced, &current), &previous_min)| !is_enforced && current > previous_min)
+}
+
+fn minimize_prefixes(target: &mut [u32], source: &[u32]) {
+    for (target, &source) in target.iter_mut().zip(source) {
+        *target = (*target).min(source);
+    }
 }
 
 fn reachable_levels(
@@ -2162,6 +2465,85 @@ mod tests {
                             let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
                             assert_eq!(
                                 masked, gt,
+                                "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn partial_collapse_candidate_rows_match_probe_examples() {
+        assert_eq!(
+            lrcoef_gt_partial_collapse_rows(&[3, 2, 1], &[2, 1]).unwrap(),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            lrcoef_gt_partial_collapse_rows(&[4, 2], &[2, 1]).unwrap(),
+            vec![0]
+        );
+        assert_eq!(
+            lrcoef_gt_partial_collapse_rows(&[7, 4, 2, 1], &[4, 2]).unwrap(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            lrcoef_gt_partial_collapse_rows(&[7, 4, 2, 1], &[4, 3, 1]).unwrap(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            lrcoef_gt_partial_collapse_rows(&[7, 6, 5, 4, 3, 2, 1], &[4, 4, 3, 2, 1]).unwrap(),
+            vec![0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn certified_partial_collapse_candidate_is_exact_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let candidate = lrcoef_gt_partial_collapse_rows(&outer, &inner).unwrap();
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let certified = lrcoef_gt_yamanouchi_mask_certified_stats(
+                                &outer, &inner, &content, &candidate,
+                            )
+                            .unwrap();
+                            if certified.omitted_constraints_forced {
+                                assert_eq!(
+                                    certified.stats.value,
+                                    lrcoef_gt_u128(&outer, &inner, &content).unwrap(),
+                                    "outer={outer:?} inner={inner:?} content={content:?} candidate={candidate:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn safe_partial_collapse_path_matches_gt_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let partial =
+                                lrcoef_gt_partial_collapse_stats(&outer, &inner, &content).unwrap();
+                            let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                partial.stats.value, gt,
                                 "outer={outer:?} inner={inner:?} content={content:?}"
                             );
                         }
