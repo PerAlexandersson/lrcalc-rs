@@ -28,6 +28,14 @@ pub struct LrGtStats {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrGtYamanouchiMaskStats {
+    pub value: u128,
+    pub peak_states: usize,
+    pub levels: Vec<usize>,
+    pub enforced_rows: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LrGtInteriorStats {
     pub value: u128,
     pub peak_states: usize,
@@ -199,6 +207,20 @@ pub fn lrcoef_gt_stats(
             lrcoef_gt_stats_compacted(&shape.outer, &shape.inner, &shape.content)
         }
     }
+}
+
+/// Count with Yamanouchi inequalities enforced only at selected rows.
+///
+/// This is an exploration hook for partial Kostka collapse.  Passing every row
+/// gives the usual LR GT count; passing fewer rows gives a controlled
+/// relaxation with a smaller prefix state.
+pub fn lrcoef_gt_yamanouchi_mask_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    enforced_rows: &[usize],
+) -> Result<LrGtYamanouchiMaskStats, LrGtError> {
+    lrcoef_gt_yamanouchi_mask_stats_raw(outer, inner, content, enforced_rows)
 }
 
 /// Count relative interior lattice points with DP state-count statistics.
@@ -432,6 +454,92 @@ fn lrcoef_gt_counts_stats_compacted(
         strict_lower_constraints: strict_lower,
         strict_diagonal_constraints: strict_diagonal,
         strict_yamanouchi_constraints: strict_yamanouchi,
+    })
+}
+
+fn lrcoef_gt_yamanouchi_mask_stats_raw(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    enforced_rows: &[usize],
+) -> Result<LrGtYamanouchiMaskStats, LrGtError> {
+    let outer = normalize_partition(outer)?;
+    let inner = normalize_partition(inner)?;
+    let content = normalize_partition(content)?;
+
+    let outer_size = checked_sum(&outer)?;
+    let inner_size = checked_sum(&inner)?;
+    let content_size = checked_sum(&content)?;
+    let rows = outer.len();
+    let enforced_rows = normalize_enforced_rows(enforced_rows, rows)?;
+
+    if inner_size > outer_size || !partition_less_equal(&inner, &outer) {
+        return Ok(zero_yamanouchi_mask_stats(enforced_rows));
+    }
+    if outer_size - inner_size != content_size {
+        return Ok(zero_yamanouchi_mask_stats(enforced_rows));
+    }
+    if content_size == 0 {
+        return Ok(if trim_eq(&outer, &inner) {
+            one_yamanouchi_mask_stats(enforced_rows)
+        } else {
+            zero_yamanouchi_mask_stats(enforced_rows)
+        });
+    }
+    if rows == 0 {
+        return Ok(zero_yamanouchi_mask_stats(enforced_rows));
+    }
+
+    let row_to_slot = row_to_prefix_slot(rows, &enforced_rows);
+    let partition_packer = Packer::new(bit_width(*outer.first().unwrap_or(&0)), rows)?;
+    let prefix_packer = Packer::new(bit_width(content_size), enforced_rows.len())?;
+    let inner_key = partition_packer.pack_padded(&inner)?;
+    let outer_key = partition_packer.pack(&outer)?;
+
+    let mut dp: HashMap<State, u128> = HashMap::new();
+    dp.insert((inner_key, 0), 1);
+    let mut peak_states = dp.len();
+    let mut levels = vec![dp.len()];
+
+    for (step, &strip_size) in content.iter().enumerate() {
+        let mut next: HashMap<State, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
+        for (&state, &count) in &dp {
+            enumerate_masked_yamanouchi_extensions(
+                partition_packer,
+                prefix_packer,
+                &outer,
+                &row_to_slot,
+                state.0,
+                strip_size,
+                previous_prefix_key(step, state),
+                |target| {
+                    let entry = next.entry(target).or_insert(0);
+                    *entry = entry
+                        .checked_add(count)
+                        .ok_or(LrGtError::ArithmeticOverflow)?;
+                    Ok(())
+                },
+            )?;
+        }
+        peak_states = peak_states.max(next.len());
+        levels.push(next.len());
+        dp = next;
+    }
+
+    let mut value = 0u128;
+    for ((partition_key, _), count) in dp {
+        if partition_key == outer_key {
+            value = value
+                .checked_add(count)
+                .ok_or(LrGtError::ArithmeticOverflow)?;
+        }
+    }
+
+    Ok(LrGtYamanouchiMaskStats {
+        value,
+        peak_states,
+        levels,
+        enforced_rows,
     })
 }
 
@@ -797,6 +905,24 @@ fn raw_partition_length(parts: &[i32]) -> usize {
 
 fn raw_part(parts: &[i32], index: usize) -> i32 {
     parts.get(index).copied().unwrap_or(0)
+}
+
+fn normalize_enforced_rows(enforced_rows: &[usize], rows: usize) -> Result<Vec<usize>, LrGtError> {
+    if enforced_rows.iter().any(|&row| row >= rows) {
+        return Err(LrGtError::InvalidInput);
+    }
+    let mut rows = enforced_rows.to_vec();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(rows)
+}
+
+fn row_to_prefix_slot(rows: usize, enforced_rows: &[usize]) -> Vec<Option<usize>> {
+    let mut slots = vec![None; rows];
+    for (slot, &row) in enforced_rows.iter().enumerate() {
+        slots[row] = Some(slot);
+    }
+    slots
 }
 
 fn reachable_levels(
@@ -1416,6 +1542,113 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn enumerate_masked_yamanouchi_extensions<F>(
+    partition_packer: Packer,
+    prefix_packer: Packer,
+    outer: &[u32],
+    row_to_slot: &[Option<usize>],
+    alpha_key: u128,
+    strip_size: u32,
+    previous_prefix_key: Option<u128>,
+    mut visit: F,
+) -> Result<(), LrGtError>
+where
+    F: FnMut(State) -> Result<(), LrGtError>,
+{
+    enumerate_masked_yamanouchi_extensions_recursive(
+        partition_packer,
+        prefix_packer,
+        outer,
+        row_to_slot,
+        alpha_key,
+        strip_size,
+        previous_prefix_key,
+        0,
+        0,
+        alpha_key,
+        0,
+        &mut visit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enumerate_masked_yamanouchi_extensions_recursive<F>(
+    partition_packer: Packer,
+    prefix_packer: Packer,
+    outer: &[u32],
+    row_to_slot: &[Option<usize>],
+    alpha_key: u128,
+    remaining: u32,
+    previous_prefix_key: Option<u128>,
+    row: usize,
+    prefix_sum: u32,
+    partial_partition_key: u128,
+    partial_prefix_key: u128,
+    visit: &mut F,
+) -> Result<(), LrGtError>
+where
+    F: FnMut(State) -> Result<(), LrGtError>,
+{
+    if row == outer.len() {
+        if remaining == 0 {
+            visit((partial_partition_key, partial_prefix_key))?;
+        }
+        return Ok(());
+    }
+
+    let base = partition_packer.get(alpha_key, row);
+    let max_from_outer = outer[row].saturating_sub(base);
+    let max_from_horizontal_strip = if row == 0 {
+        remaining
+    } else {
+        partition_packer
+            .get(alpha_key, row - 1)
+            .saturating_sub(base)
+    };
+    let max_from_yamanouchi = match (previous_prefix_key, row_to_slot[row]) {
+        (Some(prefix_key), Some(slot)) => prefix_packer
+            .get(prefix_key, slot)
+            .saturating_sub(prefix_sum),
+        _ => remaining,
+    };
+    let max_increment = remaining
+        .min(max_from_outer)
+        .min(max_from_horizontal_strip)
+        .min(max_from_yamanouchi);
+    let next_prefix_key = if let Some(slot) = row_to_slot[row] {
+        prefix_packer.set(partial_prefix_key, slot, prefix_sum)
+    } else {
+        partial_prefix_key
+    };
+
+    for increment in 0..=max_increment {
+        let value = base
+            .checked_add(increment)
+            .ok_or(LrGtError::ArithmeticOverflow)?;
+        let next_partition_key = partition_packer.set(partial_partition_key, row, value);
+        let next_prefix_sum = prefix_sum
+            .checked_add(increment)
+            .ok_or(LrGtError::ArithmeticOverflow)?;
+        enumerate_masked_yamanouchi_extensions_recursive(
+            partition_packer,
+            prefix_packer,
+            outer,
+            row_to_slot,
+            alpha_key,
+            remaining - increment,
+            previous_prefix_key,
+            row + 1,
+            next_prefix_sum,
+            next_partition_key,
+            next_prefix_key,
+            visit,
+        )?;
+    }
+
+    Ok(())
+}
+
 fn enumerate_transition_details<F>(
     partition_packer: Packer,
     prefix_packer: Packer,
@@ -1656,6 +1889,24 @@ fn one_stats() -> LrGtStats {
     }
 }
 
+fn zero_yamanouchi_mask_stats(enforced_rows: Vec<usize>) -> LrGtYamanouchiMaskStats {
+    LrGtYamanouchiMaskStats {
+        value: 0,
+        peak_states: 0,
+        levels: Vec::new(),
+        enforced_rows,
+    }
+}
+
+fn one_yamanouchi_mask_stats(enforced_rows: Vec<usize>) -> LrGtYamanouchiMaskStats {
+    LrGtYamanouchiMaskStats {
+        value: 1,
+        peak_states: 1,
+        levels: vec![1],
+        enforced_rows,
+    }
+}
+
 fn zero_interior_stats() -> LrGtInteriorStats {
     LrGtInteriorStats {
         value: 0,
@@ -1883,6 +2134,35 @@ mod tests {
                             assert_eq!(
                                 hybrid.interior, gt.interior,
                                 "interior mismatch: outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_row_yamanouchi_mask_matches_gt_count_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                let all_rows = (0..outer.len()).collect::<Vec<_>>();
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let masked = lrcoef_gt_yamanouchi_mask_stats(
+                                &outer, &inner, &content, &all_rows,
+                            )
+                            .unwrap()
+                            .value;
+                            let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                masked, gt,
+                                "outer={outer:?} inner={inner:?} content={content:?}"
                             );
                         }
                     }

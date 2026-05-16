@@ -29,11 +29,13 @@ engines.
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
   stretched Kostka DP and the equivalent stretched LR GT-chain DP.
+- `src/bin/partial_collapse_probe.rs` explores row-masked Yamanouchi DPs for
+  partial Kostka collapse candidates.
 
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-43 library tests, all benchmark-bin test targets, and doc-tests.
+44 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -65,9 +67,13 @@ The hybrid LR path recognized every case as `kostka` mode and ran at about
   before adding new optimizations.
 - Extend the hybrid LR fast paths beyond exact row-diagonal Kostka
   translations, guided by state-count gaps in `stretched_dp_bench`.
+- Use `notes/PARTIAL_KOSTKA_COLLAPSE.md` to guide a certified partial-mask
+  fast path.  Current evidence suggests low-row masks plus defect closure, not
+  defect rows alone.
 
 ## Notes
 
 - ABI inventory: `notes/ABI_SYMBOL_INVENTORY_WORKER.md`.
 - Upstream ABI summary: `notes/UPSTREAM_ABI.md`.
 - Algorithm survey and Rust roadmap: `notes/UPSTREAM_SOURCE_ALGORITHM_SURVEY.md`.
+- Partial Kostka-collapse probe: `notes/PARTIAL_KOSTKA_COLLAPSE.md`.

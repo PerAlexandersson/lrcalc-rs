@@ -53,6 +53,7 @@ timeout 60s nice -n 10 cargo run -- lr-buch-counts 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
+timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 ```
 
 Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
