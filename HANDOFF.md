@@ -32,6 +32,8 @@ engines.
   stretched Kostka DP and the equivalent stretched LR GT-chain DP.
 - `src/bin/lr_hybrid_bench.rs` compares raw GT full and paired counts with the
   combined tableau hybrid selectors on exact and near-Kostka families.
+- `src/bin/skew_kostka_ffi_bench.rs` compares direct Rust skew Kostka counts
+  with upstream C repeated Schur multiplication.
 - `src/bin/partial_collapse_probe.rs` explores row-masked Yamanouchi DPs for
   partial Kostka collapse candidates.
 
@@ -51,6 +53,11 @@ passed on 2026-05-16.  The production tableau full-count hybrid was about
 `401x` faster than raw GT-chain full counts and about `1.10x` faster than Buch
 full counts on the mixed exact/near-Kostka suite.  The paired full/interior
 tableau selector was about `152x` faster than raw GT-chain paired counts.
+
+`timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000` passed on
+2026-05-16 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  Direct Rust
+skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
+`4.332s`, about `180x` slower.
 
 ## Main Gaps
 
@@ -72,6 +79,8 @@ tableau selector was about `152x` faster than raw GT-chain paired counts.
 - Add an `nm`-based exported-symbol check for P0/P1 ABI coverage.
 - Run `scripts/lrcoef_timed_suite.sh` and the Kostka/LR benchmark scripts
   against a freshly built upstream C binary.
+- Add a broader skew Kostka corpus, especially larger sparse skew shapes and
+  repeated fixed-shape weights that can reuse `FastSkewKostkaEngine`.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
 - Benchmark the production tableau paired selector on a broader non-Kostka

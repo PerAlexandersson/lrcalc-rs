@@ -57,10 +57,12 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-counts-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
+timeout 60s nice -n 10 cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
+timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000
 ```
 
 Current `lr_hybrid_bench -- 5 3` result: the production tableau full-count
@@ -72,6 +74,9 @@ Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
 `911x` slower than packed Kostka counts on the translated suite, while the
 hybrid LR path is about `1.01x` the Kostka time and keeps matching full and
 interior counts.
+
+Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
+about `180x` faster than an upstream-C repeated Schur multiplication baseline.
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
 binary via `UPSTREAM_BIN`; see each script's help text before running.

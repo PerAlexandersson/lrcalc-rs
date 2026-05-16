@@ -1,7 +1,7 @@
 use lrcalc::kostka::{kostka_lr_triple, kostka_via_lr};
 use lrcalc::kostka_fast::{
     kostka_fast_stats, kostka_fast_u128, kostka_interior_stats, kostka_interior_u128,
-    KostkaFastError,
+    skew_kostka_fast_stats, skew_kostka_fast_u128, KostkaFastError,
 };
 use lrcalc::lr_ehrhart::{
     format_bigint_vector, format_error as format_lr_stretch_error, lr_stretch_coefficient,
@@ -85,6 +85,37 @@ fn main() {
             let rest: Vec<String> = args.collect();
             match parse_partition_pair(&rest).and_then(|parts| {
                 kostka_fast_stats(&parts[0], &parts[1]).map_err(format_kostka_fast_error)
+            }) {
+                Ok(stats) => {
+                    println!("value: {}", stats.value);
+                    println!("peak_states: {}", stats.peak_states);
+                    println!("cached_transitions: {}", stats.cached_transitions);
+                    println!("levels: {:?}", stats.levels);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("skew-kostka-fast") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                skew_kostka_fast_u128(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_kostka_fast_error)
+            }) {
+                Ok(coef) => println!("{coef}"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("skew-kostka-fast-stats") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                skew_kostka_fast_stats(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_kostka_fast_error)
             }) {
                 Ok(stats) => {
                     println!("value: {}", stats.value);
