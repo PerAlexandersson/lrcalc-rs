@@ -29,7 +29,7 @@ Options:
 
 Environment:
   RUST_BIN            Binary to profile, default target/release/lrcalc
-  RUSTFLAGS           Defaults to "-C debuginfo=1 -C force-frame-pointers=yes"
+  RUSTFLAGS           Defaults to "-C debuginfo=2 -C force-frame-pointers=yes"
   SAMPLY_RATE         Default sampling rate when --rate is not passed
   ALLOW_DOCKER=1      Permit running inside Docker after capabilities are fixed
 EOF
@@ -130,7 +130,7 @@ fi
 cd "$ROOT_DIR"
 
 if ((BUILD)); then
-  export RUSTFLAGS="${RUSTFLAGS:--C debuginfo=1 -C force-frame-pointers=yes}"
+  export RUSTFLAGS="${RUSTFLAGS:--C debuginfo=2 -C force-frame-pointers=yes}"
   echo "building release binary with RUSTFLAGS=$RUSTFLAGS"
   if command -v timeout >/dev/null 2>&1 && command -v nice >/dev/null 2>&1; then
     timeout "${CARGO_BUILD_TIMEOUT:-120s}" nice -n "${NICE_LEVEL:-10}" cargo build --release
