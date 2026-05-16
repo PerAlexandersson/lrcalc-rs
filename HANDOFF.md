@@ -70,7 +70,9 @@ On `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both took about
 `0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust improved from
 about `7.2s` to `4.1s` after `optim_skew`, then to `3.18s` after packed
 content accumulation, then to `1.85s` after maintaining packed keys
-incrementally during tableau search; upstream C took about `1.37s`.
+incrementally during tableau search, then to `1.69s` after replacing the packed
+content `HashMap<u128, u128>` with a specialized open-addressing table;
+upstream C took about `1.37s`.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly

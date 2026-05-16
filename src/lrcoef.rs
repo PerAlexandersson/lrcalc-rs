@@ -5,7 +5,6 @@
 //! tableaux with the branch-pruned search from `lrcoef_count`.
 
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
 
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -227,81 +226,7 @@ struct PackedContentAccumulator {
     len_mask: u128,
     value_mask: u128,
     max_len: usize,
-    terms: HashMap<u128, u128, IdentityBuildHasher>,
-}
-
-#[derive(Clone, Copy, Default)]
-struct IdentityBuildHasher;
-
-#[derive(Clone, Copy)]
-struct IdentityHasher {
-    value: u64,
-}
-
-impl Default for IdentityHasher {
-    fn default() -> Self {
-        Self { value: 0 }
-    }
-}
-
-impl BuildHasher for IdentityBuildHasher {
-    type Hasher = IdentityHasher;
-
-    fn build_hasher(&self) -> Self::Hasher {
-        IdentityHasher::default()
-    }
-}
-
-impl Hasher for IdentityHasher {
-    fn finish(&self) -> u64 {
-        mix_u64(self.value)
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        if bytes.len() == 16 {
-            let mut array = [0u8; 16];
-            array.copy_from_slice(bytes);
-            self.write_u128(u128::from_ne_bytes(array));
-            return;
-        }
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            let mut array = [0u8; 8];
-            array.copy_from_slice(chunk);
-            self.write_u64(u64::from_ne_bytes(array));
-        }
-        let mut tail = 0u64;
-        for (index, &byte) in chunks.remainder().iter().enumerate() {
-            tail |= u64::from(byte) << (index * 8);
-        }
-        if !chunks.remainder().is_empty() {
-            self.write_u64(tail);
-        }
-    }
-
-    fn write_u8(&mut self, i: u8) {
-        self.write(&i.to_ne_bytes());
-    }
-
-    fn write_u16(&mut self, i: u16) {
-        self.write(&i.to_ne_bytes());
-    }
-
-    fn write_u32(&mut self, i: u32) {
-        self.write(&i.to_ne_bytes());
-    }
-
-    fn write_u64(&mut self, i: u64) {
-        self.value = mix_u64(self.value ^ i);
-    }
-
-    fn write_u128(&mut self, i: u128) {
-        self.value = mix_u64(self.value ^ mix_u128(i));
-    }
-
-    fn write_usize(&mut self, i: usize) {
-        self.write(&i.to_ne_bytes());
-    }
+    terms: PackedContentTable,
 }
 
 fn mix_u64(mut value: u64) -> u64 {
@@ -351,7 +276,7 @@ impl ContentAccumulator {
                 let value_mask = packed.value_mask;
                 packed
                     .terms
-                    .into_iter()
+                    .into_entries()
                     .map(|(key, coefficient)| BetaLrContentTerm {
                         content: unpack_packed_content(key, bits, len_bits, len_mask, value_mask),
                         coefficient,
@@ -389,7 +314,10 @@ impl PackedContentAccumulator {
             len_mask: mask_bits(len_bits),
             value_mask: mask_bits(bits),
             max_len,
-            terms: HashMap::with_hasher(IdentityBuildHasher),
+            terms: PackedContentTable::with_capacity(packed_table_initial_capacity(
+                skew_size as usize,
+                label_count,
+            )),
         })
     }
 
@@ -414,11 +342,7 @@ impl PackedContentAccumulator {
     }
 
     fn add_key(&mut self, key: u128) -> Result<(), LrCoefError> {
-        let entry = self.terms.entry(key).or_insert(0);
-        *entry = entry
-            .checked_add(1)
-            .ok_or(LrCoefError::ArithmeticOverflow)?;
-        Ok(())
+        self.terms.add_key(key)
     }
 
     fn unpack(&self, key: u128) -> Vec<i32> {
@@ -434,10 +358,119 @@ impl PackedContentAccumulator {
     fn drain_to_vec_map(&mut self) -> HashMap<Vec<i32>, u128> {
         let terms = std::mem::take(&mut self.terms);
         terms
-            .into_iter()
+            .into_entries()
             .map(|(key, coefficient)| (self.unpack(key), coefficient))
             .collect()
     }
+}
+
+struct PackedContentTable {
+    keys: Vec<u128>,
+    values: Vec<u128>,
+    len: usize,
+    resize_at: usize,
+}
+
+impl Default for PackedContentTable {
+    fn default() -> Self {
+        Self::with_capacity(Self::INITIAL_CAPACITY)
+    }
+}
+
+impl PackedContentTable {
+    const INITIAL_CAPACITY: usize = 64;
+    const MAX_INITIAL_CAPACITY: usize = 65_536;
+
+    fn with_capacity(capacity: usize) -> Self {
+        let capacity = capacity.next_power_of_two().max(2);
+        Self {
+            keys: vec![0; capacity],
+            values: vec![0; capacity],
+            len: 0,
+            resize_at: resize_threshold(capacity),
+        }
+    }
+
+    fn add_key(&mut self, key: u128) -> Result<(), LrCoefError> {
+        loop {
+            let mask = self.keys.len() - 1;
+            let mut index = mix_u128(key) as usize & mask;
+            loop {
+                let value = self.values[index];
+                if value == 0 {
+                    if self.len >= self.resize_at {
+                        self.grow()?;
+                        break;
+                    }
+                    self.keys[index] = key;
+                    self.values[index] = 1;
+                    self.len += 1;
+                    return Ok(());
+                }
+                if self.keys[index] == key {
+                    self.values[index] = value
+                        .checked_add(1)
+                        .ok_or(LrCoefError::ArithmeticOverflow)?;
+                    return Ok(());
+                }
+                index = (index + 1) & mask;
+            }
+        }
+    }
+
+    fn grow(&mut self) -> Result<(), LrCoefError> {
+        let new_capacity = self
+            .keys
+            .len()
+            .checked_mul(2)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+        let old_keys = std::mem::replace(&mut self.keys, vec![0; new_capacity]);
+        let old_values = std::mem::replace(&mut self.values, vec![0; new_capacity]);
+        self.len = 0;
+        self.resize_at = resize_threshold(new_capacity);
+
+        for (key, value) in old_keys.into_iter().zip(old_values) {
+            if value != 0 {
+                self.insert_existing(key, value);
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_existing(&mut self, key: u128, value: u128) {
+        let mask = self.keys.len() - 1;
+        let mut index = mix_u128(key) as usize & mask;
+        loop {
+            if self.values[index] == 0 {
+                self.keys[index] = key;
+                self.values[index] = value;
+                self.len += 1;
+                return;
+            }
+            index = (index + 1) & mask;
+        }
+    }
+
+    fn into_entries(self) -> impl Iterator<Item = (u128, u128)> {
+        self.keys
+            .into_iter()
+            .zip(self.values)
+            .filter_map(|(key, value)| (value != 0).then_some((key, value)))
+    }
+}
+
+fn resize_threshold(capacity: usize) -> usize {
+    (capacity / 2).max(1)
+}
+
+fn packed_table_initial_capacity(skew_size: usize, label_count: usize) -> usize {
+    skew_size
+        .saturating_mul(label_count)
+        .saturating_mul(8)
+        .clamp(
+            PackedContentTable::INITIAL_CAPACITY,
+            PackedContentTable::MAX_INITIAL_CAPACITY,
+        )
 }
 
 #[derive(Clone, Debug)]
