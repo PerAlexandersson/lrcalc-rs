@@ -503,8 +503,7 @@ impl PackedContentState {
         }
     }
 
-    fn place(&mut self, label: i32) {
-        let label = label as usize;
+    fn place(&mut self, label: usize) {
         if label > self.max_len {
             self.overflow_labels += 1;
             return;
@@ -517,8 +516,7 @@ impl PackedContentState {
         }
     }
 
-    fn unplace(&mut self, label: i32) {
-        let label = label as usize;
+    fn unplace(&mut self, label: usize) {
         if label > self.max_len {
             self.overflow_labels -= 1;
             return;
@@ -2122,7 +2120,7 @@ fn beta_lrcoef_accumulate_content(
         while x > boxes[pos].max {
             x -= 1;
         }
-        while x > 0 && x > above && !beta_content_label_allowed(x, &total_counts) {
+        while x > 0 && x > above && !beta_content_label_allowed(x as usize, &total_counts) {
             x -= 1;
         }
 
@@ -2133,33 +2131,36 @@ fn beta_lrcoef_accumulate_content(
             pos -= 1;
             above = boxes[boxes[pos].north].value;
             x = boxes[pos].value;
-            unplace_content_label(x, &mut total_counts, &mut content_counts);
+            let label = x as usize;
+            unplace_content_label(label, &mut total_counts, &mut content_counts);
             if let Some(state) = &mut packed_state {
-                state.unplace(x);
+                state.unplace(label);
             }
             x -= 1;
         } else if pos + 1 < real_boxes {
             boxes[pos].value = x;
-            place_content_label(x, &mut total_counts, &mut content_counts)?;
+            let label = x as usize;
+            place_content_label(label, &mut total_counts, &mut content_counts)?;
             if let Some(state) = &mut packed_state {
-                state.place(x);
+                state.place(label);
             }
             pos += 1;
             x = boxes[boxes[pos].east].value;
             above = boxes[boxes[pos].north].value;
         } else {
             boxes[pos].value = x;
-            place_content_label(x, &mut total_counts, &mut content_counts)?;
+            let label = x as usize;
+            place_content_label(label, &mut total_counts, &mut content_counts)?;
             if let Some(state) = &mut packed_state {
-                state.place(x);
+                state.place(label);
             }
             let packed_key = packed_state
                 .as_ref()
                 .and_then(PackedContentState::packed_key);
             terms.add_packed_or_content(packed_key, &content_counts[1..])?;
-            unplace_content_label(x, &mut total_counts, &mut content_counts);
+            unplace_content_label(label, &mut total_counts, &mut content_counts);
             if let Some(state) = &mut packed_state {
-                state.unplace(x);
+                state.unplace(label);
             }
             x -= 1;
         }
@@ -2176,29 +2177,27 @@ fn initial_beta_counts(beta: &[i32], label_count: usize) -> Vec<i32> {
     counts
 }
 
-fn beta_content_label_allowed(label: i32, total_counts: &[i32]) -> bool {
-    label == 1 || total_counts[label as usize] < total_counts[(label - 1) as usize]
+fn beta_content_label_allowed(label: usize, total_counts: &[i32]) -> bool {
+    label == 1 || total_counts[label] < total_counts[label - 1]
 }
 
 fn place_content_label(
-    label: i32,
+    label: usize,
     total_counts: &mut [i32],
     content_counts: &mut [i32],
 ) -> Result<(), LrCoefError> {
-    let index = usize::try_from(label).map_err(|_| LrCoefError::ArithmeticOverflow)?;
-    total_counts[index] = total_counts[index]
+    total_counts[label] = total_counts[label]
         .checked_add(1)
         .ok_or(LrCoefError::ArithmeticOverflow)?;
-    content_counts[index] = content_counts[index]
+    content_counts[label] = content_counts[label]
         .checked_add(1)
         .ok_or(LrCoefError::ArithmeticOverflow)?;
     Ok(())
 }
 
-fn unplace_content_label(label: i32, total_counts: &mut [i32], content_counts: &mut [i32]) {
-    let index = label as usize;
-    total_counts[index] -= 1;
-    content_counts[index] -= 1;
+fn unplace_content_label(label: usize, total_counts: &mut [i32], content_counts: &mut [i32]) {
+    total_counts[label] -= 1;
+    content_counts[label] -= 1;
 }
 
 #[cfg(test)]
