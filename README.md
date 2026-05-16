@@ -19,8 +19,9 @@ upstream C.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
-  and otherwise fall back to the GT-chain LR DP.
-- Hybrid LR full/interior count stats for exact Kostka translations.
+  and otherwise fall back to Buch's tableau search.
+- Hybrid LR full/interior count stats that use packed Kostka on exact
+  translations and Buch full/interior counts otherwise.
 - Signed Kostka expansion for LR coefficients.
 - Fast ordinary and skew Kostka dynamic programs.
 - Ehrhart h-vector interpolation for pure stretched LR coefficients.
@@ -52,6 +53,8 @@ The Rust library target is named `lrcalc`, so release builds should produce
 timeout 60s nice -n 10 cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-counts-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
@@ -60,9 +63,10 @@ timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 ```
 
-Current `lr_hybrid_bench -- 5 3` result: the production tableau hybrid was
-about `382x` faster than raw GT-chain full counts and about `1.08x` faster than
-Buch full counts on a mixed exact/near-Kostka suite.
+Current `lr_hybrid_bench -- 5 3` result: the production tableau full-count
+hybrid was about `401x` faster than raw GT-chain full counts and about `1.10x`
+faster than Buch full counts.  The paired full/interior tableau selector was
+about `152x` faster than raw GT-chain paired counts.
 
 Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
 `911x` slower than packed Kostka counts on the translated suite, while the

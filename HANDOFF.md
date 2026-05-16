@@ -18,8 +18,8 @@ engines.
 - `src/lr_gt.rs` contains an independent GT-chain LR DP with stats, dimension,
   and relative-interior variants.  It also has a hybrid full-count selector
   that tries exact Kostka translation, certified partial Kostka collapse, then
-  Buch fallback.  The paired full/interior hybrid currently only uses the exact
-  Kostka translation dispatch.
+  Buch fallback.  Its production paired full/interior selector tries exact
+  Kostka translation, then Buch full/interior counts.
 - `src/kostka_fast.rs` contains packed `u128` ordinary/skew Kostka DP and
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
@@ -30,15 +30,15 @@ engines.
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
   stretched Kostka DP and the equivalent stretched LR GT-chain DP.
-- `src/bin/lr_hybrid_bench.rs` compares raw GT full counts with the combined
-  full-count hybrid selector on exact and near-Kostka families.
+- `src/bin/lr_hybrid_bench.rs` compares raw GT full and paired counts with the
+  combined tableau hybrid selectors on exact and near-Kostka families.
 - `src/bin/partial_collapse_probe.rs` explores row-masked Yamanouchi DPs for
   partial Kostka collapse candidates.
 
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-50 library tests, all benchmark-bin test targets, and doc-tests.
+55 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -47,9 +47,10 @@ The hybrid LR path recognized every case as `kostka` mode and ran at about
 `1.01x` the packed Kostka time, with matching full and interior counts.
 
 `timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3`
-passed on 2026-05-16.  The production tableau hybrid was about `382x` faster
-than raw GT-chain full counts and about `1.08x` faster than Buch full counts on
-the mixed exact/near-Kostka suite.
+passed on 2026-05-16.  The production tableau full-count hybrid was about
+`401x` faster than raw GT-chain full counts and about `1.10x` faster than Buch
+full counts on the mixed exact/near-Kostka suite.  The paired full/interior
+tableau selector was about `152x` faster than raw GT-chain paired counts.
 
 ## Main Gaps
 
@@ -73,15 +74,13 @@ the mixed exact/near-Kostka suite.
   against a freshly built upstream C binary.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
-- Extend the hybrid LR fast paths beyond exact row-diagonal Kostka
-  translations, guided by state-count gaps in `stretched_dp_bench`.
-- Use `notes/PARTIAL_KOSTKA_COLLAPSE.md` to guide a certified partial-mask
-  fast path.  Current evidence suggests low-row masks from the last
-  diagonal-concatenation defect, with all-row fallback when the certificate
-  fails.
-- Extend certified partial collapse from full counts to paired full/interior
-  counts, or keep paired counts on the exact-Kostka dispatch until a safe
-  interior certificate is available.
+- Benchmark the production tableau paired selector on a broader non-Kostka
+  corpus, since it now avoids the GT-chain fallback.
+- Use `notes/PARTIAL_KOSTKA_COLLAPSE.md` to guide larger certified partial-mask
+  experiments for full counts.
+- Extend certified partial collapse to paired full/interior counts only after a
+  safe interior certificate is available; for now paired counts use Buch
+  fallback outside exact Kostka translations.
 
 ## Notes
 

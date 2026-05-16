@@ -13,6 +13,7 @@ then the omitted prefix rows are unnecessary for that coefficient.
 - `src/lr_gt.rs`: `lrcoef_gt_yamanouchi_mask_certified_stats`
 - `src/lr_gt.rs`: `lrcoef_gt_partial_collapse_rows`
 - `src/lr_gt.rs`: `lrcoef_gt_partial_collapse_stats`
+- `src/lr_gt.rs`: `lrcoef_tableau_hybrid_counts_stats`
 - `src/bin/partial_collapse_probe.rs`: small diagnostic suite
 
 The all-row mask agrees with the usual LR count on all small triples tested.
@@ -71,14 +72,21 @@ The full-count selector is now:
 ```text
 exact Kostka translation -> packed Kostka DP
 certified partial collapse -> row-masked LR/GT DP
-otherwise -> ordinary GT-chain LR DP
+otherwise -> Buch tableau search
+```
+
+The paired full/interior production selector is:
+
+```text
+exact Kostka translation -> packed Kostka paired DP
+otherwise -> Buch full/interior counts
 ```
 
 Next:
 
 1. Benchmark the certified candidate on larger near-Kostka families.
-2. Extend the same idea to paired full/interior counts only after the full-count
-   mask behavior is stable.
+2. Extend the same idea to paired full/interior counts only after we have a
+   safe certificate for the relative-interior inequalities.
 
 Current mixed full-count benchmark:
 
@@ -86,6 +94,7 @@ Current mixed full-count benchmark:
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 ```
 
-The production tableau selector is about `382x` faster than raw GT-chain full
-counts and about `1.08x` faster than Buch full counts on the exact/near-Kostka
-benchmark suite.
+The production tableau full-count selector is about `401x` faster than raw
+GT-chain full counts and about `1.10x` faster than Buch full counts on the
+exact/near-Kostka benchmark suite.  The paired full/interior tableau selector
+is about `152x` faster than raw GT-chain paired counts.

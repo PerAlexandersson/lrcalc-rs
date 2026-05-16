@@ -9,7 +9,8 @@ use lrcalc::lr_ehrhart::{
 };
 use lrcalc::lr_gt::{
     lrcoef_gt_hybrid_stats, lrcoef_gt_interior_dfs_stats, lrcoef_gt_interior_dfs_u128,
-    lrcoef_gt_interior_stats, lrcoef_gt_interior_u128, lrcoef_gt_stats, lrcoef_gt_u128, LrGtError,
+    lrcoef_gt_interior_stats, lrcoef_gt_interior_u128, lrcoef_gt_stats, lrcoef_gt_u128,
+    lrcoef_tableau_hybrid_counts_stats, lrcoef_tableau_hybrid_stats, LrGtError,
 };
 use lrcalc::lr_signed::{lrcoef_signed_kostka, lrcoef_signed_kostka_stats, SignedLrError};
 use lrcalc::lrcoef::{
@@ -218,6 +219,90 @@ fn main() {
                     println!("enforced_rows: {:?}", stats.enforced_rows);
                     println!("peak_states: {}", stats.stats.peak_states);
                     println!("levels: {:?}", stats.stats.levels);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-tableau-hybrid") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_tableau_hybrid_stats(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => println!("{}", stats.value),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-tableau-hybrid-stats") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_tableau_hybrid_stats(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => {
+                    println!("value: {}", stats.value);
+                    println!("mode: {}", stats.mode.label());
+                    println!("enforced_rows: {:?}", stats.enforced_rows);
+                    println!("peak_states: {}", format_optional_usize(stats.peak_states));
+                    println!(
+                        "levels: {}",
+                        format_optional_usize_vec(stats.levels.as_deref())
+                    );
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-tableau-hybrid-counts") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_tableau_hybrid_counts_stats(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => {
+                    println!("full: {}", stats.full);
+                    println!("interior: {}", stats.interior);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-tableau-hybrid-counts-stats") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_tableau_hybrid_counts_stats(&parts[0], &parts[1], &parts[2])
+                    .map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => {
+                    println!("full: {}", stats.full);
+                    println!("interior: {}", stats.interior);
+                    println!("mode: {}", stats.mode.label());
+                    println!(
+                        "full_peak_states: {}",
+                        format_optional_usize(stats.full_peak_states)
+                    );
+                    println!(
+                        "interior_peak_states: {}",
+                        format_optional_usize(stats.interior_peak_states)
+                    );
+                    println!(
+                        "full_levels: {}",
+                        format_optional_usize_vec(stats.full_levels.as_deref())
+                    );
+                    println!(
+                        "interior_levels: {}",
+                        format_optional_usize_vec(stats.interior_levels.as_deref())
+                    );
                 }
                 Err(message) => {
                     eprintln!("{program}: {message}");
@@ -548,6 +633,14 @@ fn format_partition(partition: &[i32]) -> String {
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn format_optional_usize(value: Option<usize>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| value.to_string())
+}
+
+fn format_optional_usize_vec(value: Option<&[usize]>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:?}"))
 }
 
 fn format_lrcoef_error(error: LrCoefError) -> String {

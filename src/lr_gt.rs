@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use crate::kostka_fast::{
     kostka_counts_stats, kostka_fast_stats, KostkaCountsStats, KostkaFastError, KostkaFastStats,
 };
-use crate::lrcoef::{lrcoef, optim_coef, LrCoefError, OptimizedCoef};
+use crate::lrcoef::{lrcoef, lrcoef_buch_counts_u128, optim_coef, LrCoefError, OptimizedCoef};
 use num_rational::BigRational;
 use num_traits::Zero;
 
@@ -113,6 +113,32 @@ pub struct LrTableauHybridStats {
     pub value: u128,
     pub peak_states: Option<usize>,
     pub levels: Option<Vec<usize>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LrTableauHybridCountsMode {
+    KostkaTranslation,
+    BuchFallback,
+}
+
+impl LrTableauHybridCountsMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::KostkaTranslation => "kostka",
+            Self::BuchFallback => "buch-fallback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrTableauHybridCountsStats {
+    pub mode: LrTableauHybridCountsMode,
+    pub full: u128,
+    pub interior: u128,
+    pub full_peak_states: Option<usize>,
+    pub interior_peak_states: Option<usize>,
+    pub full_levels: Option<Vec<usize>>,
+    pub interior_levels: Option<Vec<usize>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -443,6 +469,41 @@ pub fn lrcoef_tableau_hybrid_stats(
         value: lrcoef(outer, inner, content).map_err(map_lrcoef_error)?,
         peak_states: None,
         levels: None,
+    })
+}
+
+/// Production-oriented paired full/interior selector.
+///
+/// Exact row-diagonal Kostka translations use the packed Kostka DP.  General
+/// LR shapes use Buch's tableau search, which computes the full count while
+/// discovering the tight facets needed for the relative-interior count.
+pub fn lrcoef_tableau_hybrid_counts_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrTableauHybridCountsStats, LrGtError> {
+    if let Some(weight) = kostka_translation_weight(outer, inner) {
+        let stats = kostka_counts_stats(content, &weight).map_err(map_kostka_error)?;
+        return Ok(LrTableauHybridCountsStats {
+            mode: LrTableauHybridCountsMode::KostkaTranslation,
+            full: stats.full,
+            interior: stats.interior,
+            full_peak_states: Some(stats.full_peak_states),
+            interior_peak_states: Some(stats.interior_peak_states),
+            full_levels: Some(stats.full_levels),
+            interior_levels: Some(stats.interior_levels),
+        });
+    }
+
+    let counts = lrcoef_buch_counts_u128(outer, inner, content).map_err(map_lrcoef_error)?;
+    Ok(LrTableauHybridCountsStats {
+        mode: LrTableauHybridCountsMode::BuchFallback,
+        full: counts.full,
+        interior: counts.interior,
+        full_peak_states: None,
+        interior_peak_states: None,
+        full_levels: None,
+        interior_levels: None,
     })
 }
 
@@ -2778,6 +2839,69 @@ mod tests {
                             assert_eq!(
                                 hybrid, buch,
                                 "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tableau_counts_hybrid_uses_kostka_translation() {
+        let shape = [5, 4, 2, 1];
+        let weight = [4, 3, 2, 2, 1];
+        let (outer, inner, content) = kostka_lr_triple(&shape, &weight).unwrap();
+        let kostka = kostka_counts_stats(&shape, &weight).unwrap();
+        let hybrid = lrcoef_tableau_hybrid_counts_stats(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrTableauHybridCountsMode::KostkaTranslation);
+        assert_eq!(hybrid.full, kostka.full);
+        assert_eq!(hybrid.interior, kostka.interior);
+        assert_eq!(hybrid.full_peak_states, Some(kostka.full_peak_states));
+        assert_eq!(
+            hybrid.interior_peak_states,
+            Some(kostka.interior_peak_states)
+        );
+    }
+
+    #[test]
+    fn tableau_counts_hybrid_uses_buch_fallback_for_general_case() {
+        let outer = [7, 4, 2, 1];
+        let inner = [4, 3, 1];
+        let content = [3, 2, 1];
+        let hybrid = lrcoef_tableau_hybrid_counts_stats(&outer, &inner, &content).unwrap();
+        let buch = lrcoef_buch_counts_u128(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrTableauHybridCountsMode::BuchFallback);
+        assert_eq!(hybrid.full, buch.full);
+        assert_eq!(hybrid.interior, buch.interior);
+        assert_eq!(hybrid.full_peak_states, None);
+        assert_eq!(hybrid.interior_peak_states, None);
+    }
+
+    #[test]
+    fn tableau_counts_hybrid_matches_gt_for_small_triples() {
+        for outer_size in 0..=5 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let hybrid =
+                                lrcoef_tableau_hybrid_counts_stats(&outer, &inner, &content)
+                                    .unwrap();
+                            let gt = lrcoef_gt_counts_stats(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                hybrid.full, gt.full,
+                                "full mismatch: outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                            assert_eq!(
+                                hybrid.interior, gt.interior,
+                                "interior mismatch: outer={outer:?} inner={inner:?} content={content:?}"
                             );
                         }
                     }

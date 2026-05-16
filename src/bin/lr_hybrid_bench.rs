@@ -1,7 +1,8 @@
 use lrcalc::kostka::kostka_lr_triple;
 use lrcalc::lr_gt::{
-    lrcoef_gt_hybrid_stats, lrcoef_gt_stats, lrcoef_tableau_hybrid_stats, LrGtHybridStats,
-    LrGtStats, LrTableauHybridStats,
+    lrcoef_gt_counts_stats, lrcoef_gt_hybrid_stats, lrcoef_gt_stats,
+    lrcoef_tableau_hybrid_counts_stats, lrcoef_tableau_hybrid_stats, LrGtCountsStats,
+    LrGtHybridStats, LrGtStats, LrTableauHybridCountsStats, LrTableauHybridStats,
 };
 use lrcalc::lrcoef::lrcoef;
 use std::hint::black_box;
@@ -25,8 +26,10 @@ struct ScaledCase {
 
 struct CaseStats {
     gt: LrGtStats,
+    gt_counts: LrGtCountsStats,
     gt_hybrid: LrGtHybridStats,
     tableau_hybrid: LrTableauHybridStats,
+    tableau_counts: LrTableauHybridCountsStats,
     buch: u128,
 }
 
@@ -74,7 +77,24 @@ fn main() {
             .unwrap_or_else(|_| panic!("tableau hybrid LR failed for {}", case.label))
             .value
     });
-    black_box((buch_sink, gt_sink, gt_hybrid_sink, tableau_hybrid_sink));
+    let (gt_counts_time, gt_counts_sink) = time_loop(repeat, &cases, |case| {
+        let stats = lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("GT LR counts failed for {}", case.label));
+        stats.full ^ stats.interior
+    });
+    let (tableau_counts_time, tableau_counts_sink) = time_loop(repeat, &cases, |case| {
+        let stats = lrcoef_tableau_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("tableau hybrid counts failed for {}", case.label));
+        stats.full ^ stats.interior
+    });
+    black_box((
+        buch_sink,
+        gt_sink,
+        gt_hybrid_sink,
+        tableau_hybrid_sink,
+        gt_counts_sink,
+        tableau_counts_sink,
+    ));
 
     println!(
         "Buch full:     {}  ({} evals)",
@@ -97,6 +117,16 @@ fn main() {
         repeat * cases.len()
     );
     println!(
+        "GT-chain counts:{}  ({} evals)",
+        format_duration(gt_counts_time),
+        repeat * cases.len()
+    );
+    println!(
+        "Tableau counts: {}  ({} evals)",
+        format_duration(tableau_counts_time),
+        repeat * cases.len()
+    );
+    println!(
         "comparison: GT/tableau-hybrid = {:.3}x",
         gt_time.as_secs_f64() / tableau_hybrid_time.as_secs_f64()
     );
@@ -107,6 +137,10 @@ fn main() {
     println!(
         "comparison: GT-hybrid/tableau-hybrid = {:.3}x",
         gt_hybrid_time.as_secs_f64() / tableau_hybrid_time.as_secs_f64()
+    );
+    println!(
+        "comparison: GT-counts/tableau-counts = {:.3}x",
+        gt_counts_time.as_secs_f64() / tableau_counts_time.as_secs_f64()
     );
 }
 
@@ -138,25 +172,37 @@ fn verify_cases(cases: &[ScaledCase]) {
             "tableau hybrid mismatch for {}",
             case.label
         );
+        assert_eq!(
+            stats.gt_counts.full, stats.tableau_counts.full,
+            "tableau counts full mismatch for {}",
+            case.label
+        );
+        assert_eq!(
+            stats.gt_counts.interior, stats.tableau_counts.interior,
+            "tableau counts interior mismatch for {}",
+            case.label
+        );
     }
     println!("correctness: ok ({} scaled cases)", cases.len());
 }
 
 fn print_case_stats(cases: &[ScaledCase]) {
     println!(
-        "case\tvalue\tgt_peak\tgt_hybrid_mode\tgt_hybrid_peak\ttableau_mode\ttableau_peak\tenforced_rows"
+        "case\tvalue\tinterior\tgt_peak\tgt_hybrid_mode\tgt_hybrid_peak\ttableau_mode\ttableau_peak\tcounts_mode\tenforced_rows"
     );
     for case in cases {
         let stats = case_stats(case);
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:?}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:?}",
             case.label,
             stats.gt.value,
+            stats.gt_counts.interior,
             stats.gt.peak_states,
             stats.gt_hybrid.mode.label(),
             stats.gt_hybrid.stats.peak_states,
             stats.tableau_hybrid.mode.label(),
             format_optional_usize(stats.tableau_hybrid.peak_states),
+            stats.tableau_counts.mode.label(),
             stats.tableau_hybrid.enforced_rows
         );
     }
@@ -166,10 +212,14 @@ fn case_stats(case: &ScaledCase) -> CaseStats {
     CaseStats {
         gt: lrcoef_gt_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("GT LR failed for {}", case.label)),
+        gt_counts: lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("GT LR counts failed for {}", case.label)),
         gt_hybrid: lrcoef_gt_hybrid_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("GT hybrid LR failed for {}", case.label)),
         tableau_hybrid: lrcoef_tableau_hybrid_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("tableau hybrid LR failed for {}", case.label)),
+        tableau_counts: lrcoef_tableau_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
+            .unwrap_or_else(|_| panic!("tableau hybrid counts failed for {}", case.label)),
         buch: lrcoef(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("Buch LR failed for {}", case.label)),
     }
