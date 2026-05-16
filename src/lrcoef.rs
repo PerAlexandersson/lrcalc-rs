@@ -4,7 +4,7 @@
 //! `lrcalc`: first compact the triple with `optim_coef`, then count LR
 //! tableaux with the branch-pruned search from `lrcoef_count`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -55,6 +55,12 @@ pub struct LrBuchInteriorMemoStats {
 pub struct LrBuchCounts {
     pub full: u128,
     pub interior: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BetaLrContentTerm {
+    pub content: Vec<i32>,
+    pub coefficient: u128,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -178,6 +184,46 @@ pub fn beta_lrcoef(
         return Ok(1);
     }
     beta_lrcoef_count(&shape)
+}
+
+/// Expand over all possible contents for the beta-shifted Yamanouchi rule.
+///
+/// The optional `max_labels` bounds the allowed tableau entries.  With
+/// `beta=[]`, this gives the full skew Schur expansion; with sufficiently
+/// dominant `beta` and a finite label bound, it gives the skew Kostka weight
+/// expansion in that many variables.
+pub fn beta_lr_content_expansion(
+    outer: &[i32],
+    inner: &[i32],
+    beta: &[i32],
+    max_labels: Option<usize>,
+) -> Result<Vec<BetaLrContentTerm>, LrCoefError> {
+    let Some(shape) = prepare_beta_expansion_shape(outer, inner, beta, max_labels)? else {
+        return Ok(Vec::new());
+    };
+    if shape.skew_size == 0 {
+        return Ok(vec![BetaLrContentTerm {
+            content: Vec::new(),
+            coefficient: 1,
+        }]);
+    }
+
+    let mut terms = BTreeMap::<Vec<i32>, u128>::new();
+    beta_lrcoef_for_each_content(&shape, |content| {
+        let entry = terms.entry(content.to_vec()).or_insert(0);
+        *entry = entry
+            .checked_add(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+        Ok(())
+    })?;
+
+    Ok(terms
+        .into_iter()
+        .map(|(content, coefficient)| BetaLrContentTerm {
+            content,
+            coefficient,
+        })
+        .collect())
 }
 
 /// Count relative interior lattice points for the beta-shifted LR polytope.
@@ -603,6 +649,71 @@ fn prepare_beta_shape(
         outer,
         inner,
         content,
+        beta,
+        label_count,
+        skew_size,
+    }))
+}
+
+fn prepare_beta_expansion_shape(
+    outer: &[i32],
+    inner: &[i32],
+    beta: &[i32],
+    max_labels: Option<usize>,
+) -> Result<Option<BetaSkewShape>, LrCoefError> {
+    if !valid_partition(outer) || !valid_partition(inner) || !valid_partition(beta) {
+        return Err(LrCoefError::InvalidPartition);
+    }
+
+    let outer = trim_vector(outer);
+    let inner = trim_vector(inner);
+    let beta = trim_vector(beta);
+
+    if has_positive_part_beyond(&inner, outer.len()) {
+        return Ok(None);
+    }
+
+    let outer_size = part_sum(&outer)?;
+    let inner_size = part_sum(&inner)?;
+    if inner_size > outer_size {
+        return Ok(None);
+    }
+    for (row, &inner_part) in inner.iter().enumerate() {
+        if inner_part > part_entry(&outer, row) {
+            return Ok(None);
+        }
+    }
+
+    let skew_size = outer_size
+        .checked_sub(inner_size)
+        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    if skew_size == 0 {
+        return Ok((outer == inner).then_some(BetaSkewShape {
+            outer,
+            inner,
+            content: Vec::new(),
+            beta,
+            label_count: 0,
+            skew_size,
+        }));
+    }
+    if outer.is_empty() {
+        return Ok(None);
+    }
+
+    let inferred_labels = part_length(&beta)
+        .checked_add(usize::try_from(skew_size).map_err(|_| LrCoefError::ArithmeticOverflow)?)
+        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    let label_count = max_labels.unwrap_or(inferred_labels);
+    if label_count == 0 {
+        return Ok(None);
+    }
+
+    let (outer, inner) = compact_skew_shape(outer, inner);
+    Ok(Some(BetaSkewShape {
+        outer,
+        inner,
+        content: Vec::new(),
         beta,
         label_count,
         skew_size,
@@ -1601,6 +1712,106 @@ where
     Ok(())
 }
 
+fn beta_lrcoef_for_each_content<F>(shape: &BetaSkewShape, mut visit: F) -> Result<(), LrCoefError>
+where
+    F: FnMut(&[i32]) -> Result<(), LrCoefError>,
+{
+    if shape.skew_size == 0 {
+        return Ok(());
+    }
+
+    let mut boxes = new_skewtab(
+        &shape.outer,
+        &shape.inner,
+        shape.label_count,
+        shape.skew_size,
+    )?;
+    let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
+    let mut content_counts = vec![0i32; shape.label_count + 1];
+
+    let n = shape.skew_size;
+    let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north].value;
+    let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+
+    loop {
+        while x > boxes[pos].max {
+            x -= 1;
+        }
+        while x > 0 && x > above && !beta_content_label_allowed(x, &total_counts) {
+            x -= 1;
+        }
+
+        if x <= above {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            unplace_content_label(x, &mut total_counts, &mut content_counts);
+            x -= 1;
+        } else if pos + 1 < real_boxes {
+            boxes[pos].value = x;
+            place_content_label(x, &mut total_counts, &mut content_counts)?;
+            pos += 1;
+            x = boxes[boxes[pos].east].value;
+            above = boxes[boxes[pos].north].value;
+        } else {
+            boxes[pos].value = x;
+            place_content_label(x, &mut total_counts, &mut content_counts)?;
+            let content = trim_content_counts(&content_counts[1..]);
+            visit(&content)?;
+            unplace_content_label(x, &mut total_counts, &mut content_counts);
+            x -= 1;
+        }
+    }
+
+    Ok(())
+}
+
+fn initial_beta_counts(beta: &[i32], label_count: usize) -> Vec<i32> {
+    let mut counts = vec![0; label_count + 1];
+    for label in 1..=label_count {
+        counts[label] = part_entry(beta, label - 1);
+    }
+    counts
+}
+
+fn beta_content_label_allowed(label: i32, total_counts: &[i32]) -> bool {
+    label == 1 || total_counts[label as usize] < total_counts[(label - 1) as usize]
+}
+
+fn place_content_label(
+    label: i32,
+    total_counts: &mut [i32],
+    content_counts: &mut [i32],
+) -> Result<(), LrCoefError> {
+    let index = usize::try_from(label).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    total_counts[index] = total_counts[index]
+        .checked_add(1)
+        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    content_counts[index] = content_counts[index]
+        .checked_add(1)
+        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    Ok(())
+}
+
+fn unplace_content_label(label: i32, total_counts: &mut [i32], content_counts: &mut [i32]) {
+    let index = label as usize;
+    total_counts[index] -= 1;
+    content_counts[index] -= 1;
+}
+
+fn trim_content_counts(content: &[i32]) -> Vec<i32> {
+    let len = content
+        .iter()
+        .rposition(|&part| part != 0)
+        .map_or(0, |index| index + 1);
+    content[..len].to_vec()
+}
+
 fn lrcoef_count_strict_tableaux(
     outer: &[i32],
     inner: &[i32],
@@ -2572,6 +2783,88 @@ mod tests {
     }
 
     #[test]
+    fn beta_content_expansion_with_empty_beta_matches_lr_outputs() {
+        let outer = [3, 2, 1];
+        let inner = [2, 1];
+        let terms = beta_lr_content_expansion(&outer, &inner, &[], None).unwrap();
+
+        assert_eq!(
+            terms,
+            vec![
+                BetaLrContentTerm {
+                    content: vec![1, 1, 1],
+                    coefficient: 1,
+                },
+                BetaLrContentTerm {
+                    content: vec![2, 1],
+                    coefficient: 2,
+                },
+                BetaLrContentTerm {
+                    content: vec![3],
+                    coefficient: 1,
+                },
+            ]
+        );
+        for term in terms {
+            assert!(valid_partition(&term.content));
+            assert_eq!(
+                term.coefficient,
+                lrcoef(&outer, &inner, &term.content).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn beta_content_expansion_respects_label_bound() {
+        let terms = beta_lr_content_expansion(&[3, 2, 1], &[2, 1], &[], Some(2)).unwrap();
+        assert_eq!(
+            terms,
+            vec![
+                BetaLrContentTerm {
+                    content: vec![2, 1],
+                    coefficient: 2,
+                },
+                BetaLrContentTerm {
+                    content: vec![3],
+                    coefficient: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dominant_beta_content_expansion_matches_skew_kostka_weights() {
+        let outer = [4, 2, 1];
+        let inner = [2, 1];
+        let skew_size = part_sum(&outer).unwrap() - part_sum(&inner).unwrap();
+        let max_labels = 3usize;
+        let beta = uniform_dominating_beta(max_labels, skew_size);
+        let terms = beta_lr_content_expansion(&outer, &inner, &beta, Some(max_labels)).unwrap();
+        let mut actual = terms
+            .into_iter()
+            .map(|term| (term.content, term.coefficient))
+            .collect::<BTreeMap<_, _>>();
+
+        for content in compositions_of_fixed_length(skew_size, max_labels) {
+            let trimmed = trim_content_counts(&content);
+            let expected = skew_kostka_fast_u128(&outer, &inner, &trimmed).unwrap();
+            if expected == 0 {
+                assert!(
+                    !actual.contains_key(&trimmed),
+                    "unexpected content={trimmed:?}"
+                );
+            } else {
+                assert_eq!(
+                    actual.remove(&trimmed),
+                    Some(expected),
+                    "content={trimmed:?}"
+                );
+            }
+        }
+        assert!(actual.is_empty(), "unmatched terms: {actual:?}");
+    }
+
+    #[test]
     fn beta_counts_report_full_and_interior() {
         let outer = [6, 4, 2];
         let inner = [3, 2, 1];
@@ -2841,6 +3134,26 @@ mod tests {
         out
     }
 
+    fn compositions_of_fixed_length(n: i32, length: usize) -> Vec<Vec<i32>> {
+        fn go(remaining: i32, slots: usize, current: &mut Vec<i32>, out: &mut Vec<Vec<i32>>) {
+            if slots == 0 {
+                if remaining == 0 {
+                    out.push(current.clone());
+                }
+                return;
+            }
+            for part in 0..=remaining {
+                current.push(part);
+                go(remaining - part, slots - 1, current, out);
+                current.pop();
+            }
+        }
+
+        let mut out = Vec::new();
+        go(n, length, &mut Vec::new(), &mut out);
+        out
+    }
+
     fn partition_less_equal_i32(inner: &[i32], outer: &[i32]) -> bool {
         let len = inner.len().max(outer.len());
         for index in 0..len {
@@ -2860,5 +3173,16 @@ mod tests {
             suffix += part_entry(content, index) + 1;
         }
         beta
+    }
+
+    fn uniform_dominating_beta(length: usize, skew_size: i32) -> Vec<i32> {
+        (0..length)
+            .map(|index| {
+                i32::try_from(length - index - 1)
+                    .unwrap()
+                    .checked_mul(skew_size + 1)
+                    .unwrap()
+            })
+            .collect()
     }
 }

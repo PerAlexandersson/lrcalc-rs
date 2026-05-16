@@ -1,10 +1,11 @@
 //! Schur product and skew Schur expansion.
 //!
-//! This is a correctness-first expansion layer. It enumerates candidate output
-//! partitions under the same row/column bounds exposed by the lrcalc ABI, then
-//! reuses the scalar Littlewood-Richardson coefficient engine.
+//! Product expansion is currently correctness-first: it enumerates candidate
+//! output partitions and reuses the scalar Littlewood-Richardson engine.  Skew
+//! expansion uses the variable-content beta tableau enumerator, which
+//! accumulates all output contents in one search.
 
-use crate::lrcoef::{lrcoef, LrCoefError};
+use crate::lrcoef::{beta_lr_content_expansion, lrcoef, LrCoefError};
 use crate::partition::Partition;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,19 +78,19 @@ pub fn schur_skew_expansion(
     let size = checked_partition_size(&outer)?
         .checked_sub(checked_partition_size(&inner)?)
         .ok_or(SchurExpansionError::ArithmeticOverflow)?;
-    let max_rows = row_bound(rows, size)?;
-    let mut terms = Vec::new();
-
-    visit_partitions(size, max_rows, size, &mut Vec::new(), &mut |content| {
-        let coefficient = lrcoef(&outer, &inner, content)?;
-        if coefficient != 0 {
-            terms.push(SchurTerm {
-                partition: content.to_vec(),
-                coefficient,
-            });
-        }
-        Ok(())
-    })?;
+    let max_labels = if rows >= 0 {
+        Some(row_bound(rows, size)?)
+    } else {
+        None
+    };
+    let mut terms = beta_lr_content_expansion(&outer, &inner, &[], max_labels)?
+        .into_iter()
+        .map(|term| SchurTerm {
+            partition: term.content,
+            coefficient: term.coefficient,
+        })
+        .collect::<Vec<_>>();
+    terms.sort_by(|left, right| right.partition.cmp(&left.partition));
 
     Ok(terms)
 }

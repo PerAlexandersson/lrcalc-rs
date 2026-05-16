@@ -21,6 +21,8 @@ upstream C.
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
   virtual Yamanouchi prefix `beta`, including paired full/interior counts.
+- Variable-content beta-prefix expansion, used by skew Schur expansion with
+  `beta=[]` and by skew Kostka weight expansion with dominant finite `beta`.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -35,9 +37,8 @@ upstream C.
 
 ## Not Yet Implemented
 
-- Optimized shared-output tableau expansion for `schur_mult` and `schur_skew`;
-  the current implementation is correct-first and reuses scalar LR
-  coefficients.
+- Optimized shared-output tableau expansion for `schur_mult`; product
+  expansion is still correct-first and reuses scalar LR coefficients.
 - Schur coproduct, fusion, and quantum product ABI functions.
 - LR tableau iterator ABI.
 - Schubert polynomial ABI and `schubmult` compatibility.

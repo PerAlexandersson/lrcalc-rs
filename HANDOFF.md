@@ -13,10 +13,10 @@ engines.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
   It also exports `schur_lrcoef`, `schur_mult`, and `schur_skew`.
-- `src/schur.rs` contains correctness-first Schur product and skew Schur
-  expansion.  It enumerates bounded output partitions and reuses scalar
-  `lrcoef`; this is ABI-correct for small/medium cases but not yet Buch's
-  shared tableau expansion algorithm.
+- `src/schur.rs` contains Schur product and skew Schur expansion.  Product
+  still enumerates bounded output partitions and reuses scalar `lrcoef`.
+  Skew expansion uses the variable-content beta tableau enumerator with
+  `beta=[]`, so all output contents are accumulated in one search.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -56,6 +56,11 @@ CLI agrees with upstream C after sorting output lines for:
 `mult 2 1 - 2 1` and `skew 3 2 1 / 2 1`.  CLI line order is not yet treated
 as a compatibility guarantee.
 
+Variable-content beta expansion passed on 2026-05-16.  With `beta=[]`, it
+matches the Schur expansion coefficients for a representative skew shape.  With
+a uniformly dominant finite `beta`, it matches skew Kostka counts over all
+weights of a fixed label bound.
+
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
 dominating partition beta, beta counts match skew Kostka full/interior counts
@@ -87,8 +92,8 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 
 ## Main Gaps
 
-- Replace the scalar-loop Schur product/skew implementation with a shared
-  expansion iterator/DP when performance matters.
+- Replace the scalar-loop Schur product implementation with a shared expansion
+  iterator/DP when performance matters.
 - Implement C ABI functions for Schur coproduct, fusion/quantum, LR tableau
   iteration, and Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
