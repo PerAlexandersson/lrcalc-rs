@@ -16,9 +16,10 @@ engines.
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.
 - `src/lr_gt.rs` contains an independent GT-chain LR DP with stats, dimension,
-  and relative-interior variants.  It also has a hybrid full/interior count
-  path that recognizes row-diagonal Kostka translations and dispatches them to
-  the packed Kostka DP.
+  and relative-interior variants.  It also has a hybrid full-count selector
+  that tries exact Kostka translation, certified partial Kostka collapse, then
+  GT-chain fallback.  The paired full/interior hybrid currently only uses the
+  exact Kostka translation dispatch.
 - `src/kostka_fast.rs` contains packed `u128` ordinary/skew Kostka DP and
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
@@ -35,7 +36,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-47 library tests, all benchmark-bin test targets, and doc-tests.
+50 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -71,8 +72,9 @@ The hybrid LR path recognized every case as `kostka` mode and ran at about
   fast path.  Current evidence suggests low-row masks from the last
   diagonal-concatenation defect, with all-row fallback when the certificate
   fails.
-- Combine `lrcoef_gt_partial_collapse_stats` with the exact Kostka dispatch
-  before using it in a public hybrid full-count selector.
+- Extend certified partial collapse from full counts to paired full/interior
+  counts, or keep paired counts on the exact-Kostka dispatch until a safe
+  interior certificate is available.
 
 ## Notes
 

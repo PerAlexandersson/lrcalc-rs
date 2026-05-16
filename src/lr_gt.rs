@@ -8,7 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::kostka_fast::{kostka_counts_stats, KostkaCountsStats, KostkaFastError};
+use crate::kostka_fast::{
+    kostka_counts_stats, kostka_fast_stats, KostkaCountsStats, KostkaFastError, KostkaFastStats,
+};
 use crate::lrcoef::{optim_coef, LrCoefError, OptimizedCoef};
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -59,6 +61,30 @@ impl LrGtPartialCollapseMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LrGtPartialCollapseStats {
     pub mode: LrGtPartialCollapseMode,
+    pub enforced_rows: Vec<usize>,
+    pub stats: LrGtStats,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LrGtHybridMode {
+    KostkaTranslation,
+    CertifiedPartialCollapse,
+    GtChainFallback,
+}
+
+impl LrGtHybridMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::KostkaTranslation => "kostka",
+            Self::CertifiedPartialCollapse => "certified-mask",
+            Self::GtChainFallback => "gt-fallback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrGtHybridStats {
+    pub mode: LrGtHybridMode,
     pub enforced_rows: Vec<usize>,
     pub stats: LrGtStats,
 }
@@ -313,6 +339,39 @@ pub fn lrcoef_gt_partial_collapse_stats(
         mode: LrGtPartialCollapseMode::GtChainFallback,
         enforced_rows: candidate,
         stats: lrcoef_gt_stats(outer, inner, content)?,
+    })
+}
+
+/// Full-count hybrid selector for LR coefficients.
+///
+/// This is still a tableau/GT-chain strategy:
+/// exact row-diagonal Kostka translations use the packed Kostka tableau DP,
+/// near-Kostka cases may use a certified row-masked LR/GT DP, and all other
+/// cases fall back to the ordinary GT-chain LR DP.
+pub fn lrcoef_gt_hybrid_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrGtHybridStats, LrGtError> {
+    if let Some(weight) = kostka_translation_weight(outer, inner) {
+        let stats =
+            kostka_fast_to_lr_stats(kostka_fast_stats(content, &weight).map_err(map_kostka_error)?);
+        return Ok(LrGtHybridStats {
+            mode: LrGtHybridMode::KostkaTranslation,
+            enforced_rows: Vec::new(),
+            stats,
+        });
+    }
+
+    let partial = lrcoef_gt_partial_collapse_stats(outer, inner, content)?;
+    let mode = match partial.mode {
+        LrGtPartialCollapseMode::CertifiedMask => LrGtHybridMode::CertifiedPartialCollapse,
+        LrGtPartialCollapseMode::GtChainFallback => LrGtHybridMode::GtChainFallback,
+    };
+    Ok(LrGtHybridStats {
+        mode,
+        enforced_rows: partial.enforced_rows,
+        stats: partial.stats,
     })
 }
 
@@ -1088,6 +1147,14 @@ fn kostka_counts_to_lr(stats: KostkaCountsStats) -> LrGtCountsStats {
         strict_lower_constraints: stats.strict_lower_constraints,
         strict_diagonal_constraints: stats.strict_diagonal_constraints,
         strict_yamanouchi_constraints: 0,
+    }
+}
+
+fn kostka_fast_to_lr_stats(stats: KostkaFastStats) -> LrGtStats {
+    LrGtStats {
+        value: stats.value,
+        peak_states: stats.peak_states,
+        levels: stats.levels,
     }
 }
 
@@ -2544,6 +2611,60 @@ mod tests {
                             let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
                             assert_eq!(
                                 partial.stats.value, gt,
+                                "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn full_hybrid_uses_kostka_translation_first() {
+        let shape = [5, 4, 2, 1];
+        let weight = [4, 3, 2, 2, 1];
+        let (outer, inner, content) = kostka_lr_triple(&shape, &weight).unwrap();
+        let kostka = kostka_fast_stats(&shape, &weight).unwrap();
+        let hybrid = lrcoef_gt_hybrid_stats(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrGtHybridMode::KostkaTranslation);
+        assert_eq!(hybrid.stats.value, kostka.value);
+        assert_eq!(hybrid.stats.peak_states, kostka.peak_states);
+        assert!(hybrid.enforced_rows.is_empty());
+    }
+
+    #[test]
+    fn full_hybrid_uses_certified_partial_collapse() {
+        let outer = [7, 4, 2, 1];
+        let inner = [4, 2];
+        let content = [5, 2, 1];
+        let hybrid = lrcoef_gt_hybrid_stats(&outer, &inner, &content).unwrap();
+        let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrGtHybridMode::CertifiedPartialCollapse);
+        assert_eq!(hybrid.enforced_rows, vec![0, 1]);
+        assert_eq!(hybrid.stats.value, gt);
+    }
+
+    #[test]
+    fn full_hybrid_matches_gt_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let hybrid = lrcoef_gt_hybrid_stats(&outer, &inner, &content)
+                                .unwrap()
+                                .stats
+                                .value;
+                            let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                hybrid, gt,
                                 "outer={outer:?} inner={inner:?} content={content:?}"
                             );
                         }

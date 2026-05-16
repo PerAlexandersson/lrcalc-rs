@@ -1,6 +1,6 @@
 use lrcalc::kostka::kostka_lr_triple;
 use lrcalc::lr_gt::{
-    lrcoef_gt_partial_collapse_rows, lrcoef_gt_partial_collapse_stats,
+    lrcoef_gt_hybrid_stats, lrcoef_gt_partial_collapse_rows, lrcoef_gt_partial_collapse_stats,
     lrcoef_gt_yamanouchi_mask_certified_stats, lrcoef_gt_yamanouchi_mask_stats,
     LrGtYamanouchiMaskCertifiedStats, LrGtYamanouchiMaskStats,
 };
@@ -17,7 +17,7 @@ fn main() {
     let cases = cases();
     println!("suite: partial_collapse_probe");
     println!(
-        "case\trows\tvalue\tall_peak\tempty_value\tempty_peak\tcandidate\tcandidate_value\tcandidate_peak\tcandidate_cert\tsafe_mode\tsafe_peak\tbest_mask\tbest_peak"
+        "case\trows\tvalue\tall_peak\tempty_value\tempty_peak\tcandidate\tcandidate_value\tcandidate_peak\tcandidate_cert\tpartial_mode\tpartial_peak\thybrid_mode\thybrid_peak\tbest_mask\tbest_peak"
     );
 
     for case in &cases {
@@ -35,8 +35,10 @@ fn print_case(case: &Case) {
     let candidate = lrcoef_gt_partial_collapse_rows(&case.outer, &case.inner)
         .unwrap_or_else(|_| panic!("candidate rows failed for {}", case.label));
     let candidate_certified = certified_mask_stats(case, &candidate);
-    let safe = lrcoef_gt_partial_collapse_stats(&case.outer, &case.inner, &case.content)
+    let partial = lrcoef_gt_partial_collapse_stats(&case.outer, &case.inner, &case.content)
         .unwrap_or_else(|_| panic!("safe partial collapse failed for {}", case.label));
+    let hybrid = lrcoef_gt_hybrid_stats(&case.outer, &case.inner, &case.content)
+        .unwrap_or_else(|_| panic!("hybrid LR failed for {}", case.label));
     let best = best_matching_mask(case, full.value, rows);
     let (best_mask, best_peak) = best.as_ref().map_or_else(
         || ("skip".to_string(), 0),
@@ -44,7 +46,7 @@ fn print_case(case: &Case) {
     );
 
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         case.label,
         rows,
         full.value,
@@ -55,8 +57,10 @@ fn print_case(case: &Case) {
         candidate_certified.stats.value,
         candidate_certified.stats.peak_states,
         candidate_certified.omitted_constraints_forced,
-        safe.mode.label(),
-        safe.stats.peak_states,
+        partial.mode.label(),
+        partial.stats.peak_states,
+        hybrid.mode.label(),
+        hybrid.stats.peak_states,
         best_mask,
         best_peak
     );

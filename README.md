@@ -17,8 +17,10 @@ upstream C.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - GT-chain LR counter, including relative-interior and dimension variants.
-- Hybrid LR count stats that dispatch Kostka-translation skew shapes to the
-  packed Kostka DP and otherwise use the GT-chain LR DP.
+- Hybrid LR full-count stats that dispatch exact Kostka translations to the
+  packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
+  and otherwise fall back to the GT-chain LR DP.
+- Hybrid LR full/interior count stats for exact Kostka translations.
 - Signed Kostka expansion for LR coefficients.
 - Fast ordinary and skew Kostka dynamic programs.
 - Ehrhart h-vector interpolation for pure stretched LR coefficients.
@@ -47,11 +49,12 @@ The Rust library target is named `lrcalc`, so release builds should produce
 ## Useful Commands
 
 ```bash
-timeout 60s nice -n 10 cargo run -- coef 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run -- lr-gt 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run -- lr-buch-counts 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run -- kostka-fast 3 2 1 - 2 2 2
-timeout 60s nice -n 10 cargo run -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
+timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 ```

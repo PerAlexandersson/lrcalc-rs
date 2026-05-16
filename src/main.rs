@@ -8,8 +8,8 @@ use lrcalc::lr_ehrhart::{
     lr_stretch_h_vector,
 };
 use lrcalc::lr_gt::{
-    lrcoef_gt_interior_dfs_stats, lrcoef_gt_interior_dfs_u128, lrcoef_gt_interior_stats,
-    lrcoef_gt_interior_u128, lrcoef_gt_stats, lrcoef_gt_u128, LrGtError,
+    lrcoef_gt_hybrid_stats, lrcoef_gt_interior_dfs_stats, lrcoef_gt_interior_dfs_u128,
+    lrcoef_gt_interior_stats, lrcoef_gt_interior_u128, lrcoef_gt_stats, lrcoef_gt_u128, LrGtError,
 };
 use lrcalc::lr_signed::{lrcoef_signed_kostka, lrcoef_signed_kostka_stats, SignedLrError};
 use lrcalc::lrcoef::{
@@ -188,6 +188,36 @@ fn main() {
                     println!("value: {}", stats.value);
                     println!("peak_states: {}", stats.peak_states);
                     println!("levels: {:?}", stats.levels);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-gt-hybrid") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_gt_hybrid_stats(&parts[0], &parts[1], &parts[2]).map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => println!("{}", stats.stats.value),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("lr-gt-hybrid-stats") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_triple(&rest).and_then(|parts| {
+                lrcoef_gt_hybrid_stats(&parts[0], &parts[1], &parts[2]).map_err(format_lr_gt_error)
+            }) {
+                Ok(stats) => {
+                    println!("value: {}", stats.stats.value);
+                    println!("mode: {}", stats.mode.label());
+                    println!("enforced_rows: {:?}", stats.enforced_rows);
+                    println!("peak_states: {}", stats.stats.peak_states);
+                    println!("levels: {:?}", stats.stats.levels);
                 }
                 Err(message) => {
                     eprintln!("{program}: {message}");

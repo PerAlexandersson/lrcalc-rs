@@ -64,10 +64,16 @@ near-Kostka examples and is certified on the diagnostic cases above.
 
 ## Next Step
 
-Turn the probe into a safe heuristic:
+The full-count selector is now:
+
+```text
+exact Kostka translation -> packed Kostka DP
+certified partial collapse -> row-masked LR/GT DP
+otherwise -> ordinary GT-chain LR DP
+```
+
+Next:
 
 1. Benchmark the certified candidate on larger near-Kostka families.
-2. Combine the certified full-count path with the exact Kostka dispatch in the
-   public hybrid selector.
-3. Extend the same idea to paired full/interior counts only after the full-count
+2. Extend the same idea to paired full/interior counts only after the full-count
    mask behavior is stable.
