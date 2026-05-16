@@ -51,7 +51,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-93 library tests, all benchmark-bin test targets, and doc-tests.
+95 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -69,7 +69,8 @@ all contained skew shapes of outer size at most `7` and row bounds
 On `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both took about
 `0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust improved from
 about `7.2s` to `4.1s` after `optim_skew`, then to `3.18s` after packed
-content accumulation; upstream C took about `1.34s`.
+content accumulation, then to `1.88s` after maintaining packed keys
+incrementally during tableau search; upstream C took about `1.37s`.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly

@@ -210,7 +210,7 @@ pub fn beta_lr_content_expansion(
     }
 
     let mut terms = ContentAccumulator::new(shape.skew_size, shape.label_count);
-    beta_lrcoef_for_each_content(&shape, |content| terms.add(content))?;
+    beta_lrcoef_accumulate_content(&shape, &mut terms)?;
 
     let mut terms = terms.into_terms();
     terms.sort_by(|left, right| left.content.cmp(&right.content));
@@ -325,14 +325,12 @@ impl ContentAccumulator {
             .map_or_else(|| Self::VecMap(HashMap::new()), Self::Packed)
     }
 
+    #[cfg(test)]
     fn add(&mut self, content: &[i32]) -> Result<(), LrCoefError> {
         match self {
             Self::Packed(packed) => {
                 if let Some(key) = packed.pack(content) {
-                    let entry = packed.terms.entry(key).or_insert(0);
-                    *entry = entry
-                        .checked_add(1)
-                        .ok_or(LrCoefError::ArithmeticOverflow)?;
+                    packed.add_key(key)?;
                     Ok(())
                 } else {
                     let mut vec_terms = packed.drain_to_vec_map();
@@ -342,6 +340,42 @@ impl ContentAccumulator {
                 }
             }
             Self::VecMap(terms) => add_vec_content(terms, content),
+        }
+    }
+
+    fn add_packed_or_content(
+        &mut self,
+        key: Option<u128>,
+        content_counts: &[i32],
+    ) -> Result<(), LrCoefError> {
+        match self {
+            Self::Packed(packed) => {
+                if let Some(key) = key {
+                    packed.add_key(key)
+                } else {
+                    let content = trimmed_content_slice(content_counts);
+                    let Self::Packed(mut packed) =
+                        std::mem::replace(self, Self::VecMap(HashMap::new()))
+                    else {
+                        unreachable!("matched packed accumulator above");
+                    };
+                    let mut vec_terms = packed.drain_to_vec_map();
+                    add_vec_content(&mut vec_terms, content)?;
+                    *self = Self::VecMap(vec_terms);
+                    Ok(())
+                }
+            }
+            Self::VecMap(terms) => {
+                let content = trimmed_content_slice(content_counts);
+                add_vec_content(terms, content)
+            }
+        }
+    }
+
+    fn packed_state(&self) -> Option<PackedContentState> {
+        match self {
+            Self::Packed(packed) => Some(PackedContentState::new(packed)),
+            Self::VecMap(_) => None,
         }
     }
 
@@ -396,6 +430,7 @@ impl PackedContentAccumulator {
         })
     }
 
+    #[cfg(test)]
     fn pack(&self, content: &[i32]) -> Option<u128> {
         if content.len() > self.max_len || u128::try_from(content.len()).ok()? > self.len_mask {
             return None;
@@ -415,6 +450,14 @@ impl PackedContentAccumulator {
         Some(key)
     }
 
+    fn add_key(&mut self, key: u128) -> Result<(), LrCoefError> {
+        let entry = self.terms.entry(key).or_insert(0);
+        *entry = entry
+            .checked_add(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+        Ok(())
+    }
+
     fn unpack(&self, key: u128) -> Vec<i32> {
         let len = (key & self.len_mask) as usize;
         let mut content = Vec::with_capacity(len);
@@ -431,6 +474,91 @@ impl PackedContentAccumulator {
             .into_iter()
             .map(|(key, coefficient)| (self.unpack(key), coefficient))
             .collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PackedContentState {
+    bits: u32,
+    len_bits: u32,
+    len_mask: u128,
+    value_mask: u128,
+    max_len: usize,
+    len: usize,
+    key: u128,
+    overflow_labels: usize,
+}
+
+impl PackedContentState {
+    fn new(accumulator: &PackedContentAccumulator) -> Self {
+        Self {
+            bits: accumulator.bits,
+            len_bits: accumulator.len_bits,
+            len_mask: accumulator.len_mask,
+            value_mask: accumulator.value_mask,
+            max_len: accumulator.max_len,
+            len: 0,
+            key: 0,
+            overflow_labels: 0,
+        }
+    }
+
+    fn place(&mut self, label: i32) {
+        let label = label as usize;
+        if label > self.max_len {
+            self.overflow_labels += 1;
+            return;
+        }
+        let old = self.get(label);
+        debug_assert!(old < self.value_mask);
+        self.set(label, old + 1);
+        if label > self.len {
+            self.set_len(label);
+        }
+    }
+
+    fn unplace(&mut self, label: i32) {
+        let label = label as usize;
+        if label > self.max_len {
+            self.overflow_labels -= 1;
+            return;
+        }
+        let old = self.get(label);
+        debug_assert!(old > 0);
+        self.set(label, old - 1);
+        if label == self.len && old == 1 {
+            while self.len > 0 && self.get(self.len) == 0 {
+                self.len -= 1;
+            }
+            self.write_len();
+        }
+    }
+
+    fn packed_key(&self) -> Option<u128> {
+        (self.overflow_labels == 0).then_some(self.key)
+    }
+
+    fn get(&self, label: usize) -> u128 {
+        (self.key >> self.shift(label)) & self.value_mask
+    }
+
+    fn set(&mut self, label: usize, value: u128) {
+        let shift = self.shift(label);
+        let mask = self.value_mask << shift;
+        self.key = (self.key & !mask) | (value << shift);
+    }
+
+    fn shift(&self, label: usize) -> u32 {
+        self.len_bits + self.bits * (label - 1) as u32
+    }
+
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
+        self.write_len();
+    }
+
+    fn write_len(&mut self) {
+        self.key = (self.key & !self.len_mask) | self.len as u128;
     }
 }
 
@@ -1966,10 +2094,10 @@ where
     Ok(())
 }
 
-fn beta_lrcoef_for_each_content<F>(shape: &BetaSkewShape, mut visit: F) -> Result<(), LrCoefError>
-where
-    F: FnMut(&[i32]) -> Result<(), LrCoefError>,
-{
+fn beta_lrcoef_accumulate_content(
+    shape: &BetaSkewShape,
+    terms: &mut ContentAccumulator,
+) -> Result<(), LrCoefError> {
     if shape.skew_size == 0 {
         return Ok(());
     }
@@ -1982,6 +2110,7 @@ where
     )?;
     let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
     let mut content_counts = vec![0i32; shape.label_count + 1];
+    let mut packed_state = terms.packed_state();
 
     let n = shape.skew_size;
     let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
@@ -2005,19 +2134,33 @@ where
             above = boxes[boxes[pos].north].value;
             x = boxes[pos].value;
             unplace_content_label(x, &mut total_counts, &mut content_counts);
+            if let Some(state) = &mut packed_state {
+                state.unplace(x);
+            }
             x -= 1;
         } else if pos + 1 < real_boxes {
             boxes[pos].value = x;
             place_content_label(x, &mut total_counts, &mut content_counts)?;
+            if let Some(state) = &mut packed_state {
+                state.place(x);
+            }
             pos += 1;
             x = boxes[boxes[pos].east].value;
             above = boxes[boxes[pos].north].value;
         } else {
             boxes[pos].value = x;
             place_content_label(x, &mut total_counts, &mut content_counts)?;
-            let content = trimmed_content_slice(&content_counts[1..]);
-            visit(content)?;
+            if let Some(state) = &mut packed_state {
+                state.place(x);
+            }
+            let packed_key = packed_state
+                .as_ref()
+                .and_then(PackedContentState::packed_key);
+            terms.add_packed_or_content(packed_key, &content_counts[1..])?;
             unplace_content_label(x, &mut total_counts, &mut content_counts);
+            if let Some(state) = &mut packed_state {
+                state.unplace(x);
+            }
             x -= 1;
         }
     }
