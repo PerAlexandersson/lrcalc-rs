@@ -5,6 +5,7 @@
 //! tableaux with the branch-pruned search from `lrcoef_count`.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -208,27 +209,275 @@ pub fn beta_lr_content_expansion(
         }]);
     }
 
-    let mut terms = HashMap::<Vec<i32>, u128>::new();
-    beta_lrcoef_for_each_content(&shape, |content| {
-        if let Some(entry) = terms.get_mut(content) {
-            *entry = entry
-                .checked_add(1)
-                .ok_or(LrCoefError::ArithmeticOverflow)?;
-        } else {
-            terms.insert(content.to_vec(), 1);
-        }
-        Ok(())
-    })?;
+    let mut terms = ContentAccumulator::new(shape.skew_size, shape.label_count);
+    beta_lrcoef_for_each_content(&shape, |content| terms.add(content))?;
 
-    let mut terms = terms
-        .into_iter()
-        .map(|(content, coefficient)| BetaLrContentTerm {
-            content,
-            coefficient,
-        })
-        .collect::<Vec<_>>();
+    let mut terms = terms.into_terms();
     terms.sort_by(|left, right| left.content.cmp(&right.content));
     Ok(terms)
+}
+
+enum ContentAccumulator {
+    Packed(PackedContentAccumulator),
+    VecMap(HashMap<Vec<i32>, u128>),
+}
+
+struct PackedContentAccumulator {
+    bits: u32,
+    len_bits: u32,
+    len_mask: u128,
+    value_mask: u128,
+    max_len: usize,
+    terms: HashMap<u128, u128, IdentityBuildHasher>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct IdentityBuildHasher;
+
+#[derive(Clone, Copy)]
+struct IdentityHasher {
+    value: u64,
+}
+
+impl Default for IdentityHasher {
+    fn default() -> Self {
+        Self { value: 0 }
+    }
+}
+
+impl BuildHasher for IdentityBuildHasher {
+    type Hasher = IdentityHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        IdentityHasher::default()
+    }
+}
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> u64 {
+        mix_u64(self.value)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        if bytes.len() == 16 {
+            let mut array = [0u8; 16];
+            array.copy_from_slice(bytes);
+            self.write_u128(u128::from_ne_bytes(array));
+            return;
+        }
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            let mut array = [0u8; 8];
+            array.copy_from_slice(chunk);
+            self.write_u64(u64::from_ne_bytes(array));
+        }
+        let mut tail = 0u64;
+        for (index, &byte) in chunks.remainder().iter().enumerate() {
+            tail |= u64::from(byte) << (index * 8);
+        }
+        if !chunks.remainder().is_empty() {
+            self.write_u64(tail);
+        }
+    }
+
+    fn write_u8(&mut self, i: u8) {
+        self.write(&i.to_ne_bytes());
+    }
+
+    fn write_u16(&mut self, i: u16) {
+        self.write(&i.to_ne_bytes());
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.write(&i.to_ne_bytes());
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.value = mix_u64(self.value ^ i);
+    }
+
+    fn write_u128(&mut self, i: u128) {
+        self.value = mix_u64(self.value ^ mix_u128(i));
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.write(&i.to_ne_bytes());
+    }
+}
+
+fn mix_u64(mut value: u64) -> u64 {
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    value ^ (value >> 33)
+}
+
+fn mix_u128(value: u128) -> u64 {
+    let low = value as u64;
+    let high = (value >> 64) as u64;
+    mix_u64(low ^ high.rotate_left(32))
+}
+
+impl ContentAccumulator {
+    fn new(skew_size: i32, label_count: usize) -> Self {
+        PackedContentAccumulator::new(skew_size, label_count)
+            .map_or_else(|| Self::VecMap(HashMap::new()), Self::Packed)
+    }
+
+    fn add(&mut self, content: &[i32]) -> Result<(), LrCoefError> {
+        match self {
+            Self::Packed(packed) => {
+                if let Some(key) = packed.pack(content) {
+                    let entry = packed.terms.entry(key).or_insert(0);
+                    *entry = entry
+                        .checked_add(1)
+                        .ok_or(LrCoefError::ArithmeticOverflow)?;
+                    Ok(())
+                } else {
+                    let mut vec_terms = packed.drain_to_vec_map();
+                    add_vec_content(&mut vec_terms, content)?;
+                    *self = Self::VecMap(vec_terms);
+                    Ok(())
+                }
+            }
+            Self::VecMap(terms) => add_vec_content(terms, content),
+        }
+    }
+
+    fn into_terms(self) -> Vec<BetaLrContentTerm> {
+        match self {
+            Self::Packed(packed) => {
+                let bits = packed.bits;
+                let len_bits = packed.len_bits;
+                let len_mask = packed.len_mask;
+                let value_mask = packed.value_mask;
+                packed
+                    .terms
+                    .into_iter()
+                    .map(|(key, coefficient)| BetaLrContentTerm {
+                        content: unpack_packed_content(key, bits, len_bits, len_mask, value_mask),
+                        coefficient,
+                    })
+                    .collect()
+            }
+            Self::VecMap(terms) => terms
+                .into_iter()
+                .map(|(content, coefficient)| BetaLrContentTerm {
+                    content,
+                    coefficient,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl PackedContentAccumulator {
+    fn new(skew_size: i32, label_count: usize) -> Option<Self> {
+        if skew_size < 0 {
+            return None;
+        }
+        let bits = bits_needed_u128(skew_size as u128);
+        let len_bits = bits_needed_u128(label_count as u128);
+        if bits == 0 || len_bits >= 128 {
+            return None;
+        }
+        let max_len = ((128 - len_bits) / bits) as usize;
+        if max_len == 0 {
+            return None;
+        }
+        Some(Self {
+            bits,
+            len_bits,
+            len_mask: mask_bits(len_bits),
+            value_mask: mask_bits(bits),
+            max_len,
+            terms: HashMap::with_hasher(IdentityBuildHasher),
+        })
+    }
+
+    fn pack(&self, content: &[i32]) -> Option<u128> {
+        if content.len() > self.max_len || u128::try_from(content.len()).ok()? > self.len_mask {
+            return None;
+        }
+        let mut key = content.len() as u128;
+        for (index, &part) in content.iter().enumerate() {
+            if part < 0 {
+                return None;
+            }
+            let part = part as u128;
+            if part > self.value_mask {
+                return None;
+            }
+            let shift = self.len_bits + self.bits * index as u32;
+            key |= part << shift;
+        }
+        Some(key)
+    }
+
+    fn unpack(&self, key: u128) -> Vec<i32> {
+        let len = (key & self.len_mask) as usize;
+        let mut content = Vec::with_capacity(len);
+        for index in 0..len {
+            let shift = self.len_bits + self.bits * index as u32;
+            content.push(((key >> shift) & self.value_mask) as i32);
+        }
+        content
+    }
+
+    fn drain_to_vec_map(&mut self) -> HashMap<Vec<i32>, u128> {
+        let terms = std::mem::take(&mut self.terms);
+        terms
+            .into_iter()
+            .map(|(key, coefficient)| (self.unpack(key), coefficient))
+            .collect()
+    }
+}
+
+fn add_vec_content(
+    terms: &mut HashMap<Vec<i32>, u128>,
+    content: &[i32],
+) -> Result<(), LrCoefError> {
+    if let Some(entry) = terms.get_mut(content) {
+        *entry = entry
+            .checked_add(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+    } else {
+        terms.insert(content.to_vec(), 1);
+    }
+    Ok(())
+}
+
+fn unpack_packed_content(
+    key: u128,
+    bits: u32,
+    len_bits: u32,
+    len_mask: u128,
+    value_mask: u128,
+) -> Vec<i32> {
+    let len = (key & len_mask) as usize;
+    let mut content = Vec::with_capacity(len);
+    for index in 0..len {
+        let shift = len_bits + bits * index as u32;
+        content.push(((key >> shift) & value_mask) as i32);
+    }
+    content
+}
+
+fn bits_needed_u128(value: u128) -> u32 {
+    if value == 0 {
+        1
+    } else {
+        u128::BITS - value.leading_zeros()
+    }
+}
+
+fn mask_bits(bits: u32) -> u128 {
+    if bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    }
 }
 
 /// Count relative interior lattice points for the beta-shifted LR polytope.
@@ -2690,6 +2939,40 @@ mod tests {
         assert_eq!(lrcoef(&[3, 2, 1], &[2, 1], &[2, 1]), Ok(2));
         assert_eq!(lrcoef(&[4, 2], &[2, 1], &[2, 1]), Ok(1));
         assert_eq!(lrcoef(&[5, 1], &[2, 1], &[2, 1]), Ok(0));
+    }
+
+    #[test]
+    fn packed_content_accumulator_combines_equal_terms() {
+        let mut accumulator = ContentAccumulator::new(10, 8);
+        accumulator.add(&[2, 0, 1]).unwrap();
+        accumulator.add(&[2, 0, 1]).unwrap();
+        accumulator.add(&[]).unwrap();
+
+        let actual = accumulator
+            .into_terms()
+            .into_iter()
+            .map(|term| (term.content, term.coefficient))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(actual.get(&vec![2, 0, 1]), Some(&2));
+        assert_eq!(actual.get(&Vec::<i32>::new()), Some(&1));
+    }
+
+    #[test]
+    fn content_accumulator_falls_back_for_long_content() {
+        let mut accumulator = ContentAccumulator::new(10, 1000);
+        let mut content = vec![0; 30];
+        content[29] = 1;
+        accumulator.add(&content).unwrap();
+        accumulator.add(&content).unwrap();
+
+        let actual = accumulator
+            .into_terms()
+            .into_iter()
+            .map(|term| (term.content, term.coefficient))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(actual.get(&content), Some(&2));
     }
 
     #[test]

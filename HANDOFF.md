@@ -68,7 +68,8 @@ all contained skew shapes of outer size at most `7` and row bounds
 `[-1, 0, 1, 2, 3, 4]`, comparing the optimized path with scalar LR expansion.
 On `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both took about
 `0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust improved from
-about `7.2s` to `4.1s`; upstream C took about `1.4s`.
+about `7.2s` to `4.1s` after `optim_skew`, then to `3.18s` after packed
+content accumulation; upstream C took about `1.34s`.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
