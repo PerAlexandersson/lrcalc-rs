@@ -16,6 +16,8 @@ upstream C.
 - `lrcalc coef` / `lrcalc lrcoef` CLI command.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
+- Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
+  virtual Yamanouchi prefix `beta`, including paired full/interior counts.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -56,6 +58,7 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-counts-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-buch-counts 5 3 1 - 3 2 1 - 2 1 - 2 0
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1

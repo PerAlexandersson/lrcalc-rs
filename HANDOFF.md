@@ -14,7 +14,9 @@ engines.
   `schur_lrcoef`.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
-  stretch-cache helpers.
+  stretch-cache helpers.  It also exposes beta-prefix LR counts for
+  `outer/inner`, `content`, and virtual Yamanouchi prefix `beta`; the beta path
+  supports paired full/interior counts and dimension.
 - `src/lr_gt.rs` contains an independent GT-chain LR DP with stats, dimension,
   and relative-interior variants.  It also has a hybrid full-count selector
   that tries exact Kostka translation, certified partial Kostka collapse, then
@@ -24,8 +26,9 @@ engines.
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
 - `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families.
-- CLI commands expose the coefficient engines and diagnostic/stat modes, but
-  not upstream `mult`, `skew`, `coprod`, `tab`, or `schubmult` behavior.
+- CLI commands expose the coefficient engines, beta-prefix LR counts, and
+  diagnostic/stat modes, but not upstream `mult`, `skew`, `coprod`, `tab`, or
+  `schubmult` behavior.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -40,7 +43,12 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-55 library tests, all benchmark-bin test targets, and doc-tests.
+59 library tests, all benchmark-bin test targets, and doc-tests.
+
+Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
+match ordinary LR full/interior counts on small triples.  With a strictly
+dominating partition beta, beta counts match skew Kostka full/interior counts
+on representative cases.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -90,6 +98,8 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 - Extend certified partial collapse to paired full/interior counts only after a
   safe interior certificate is available; for now paired counts use Buch
   fallback outside exact Kostka translations.
+- Use the beta-prefix LR API as the uniform surface for interpolation
+  experiments that move between ordinary LR and skew Kostka behavior.
 
 ## Notes
 

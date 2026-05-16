@@ -14,9 +14,11 @@ use lrcalc::lr_gt::{
 };
 use lrcalc::lr_signed::{lrcoef_signed_kostka, lrcoef_signed_kostka_stats, SignedLrError};
 use lrcalc::lrcoef::{
-    lrcoef, lrcoef_buch_counts_u128, lrcoef_buch_dimension, lrcoef_buch_interior_memo_stats,
+    beta_lrcoef, beta_lrcoef_buch_counts_u128, beta_lrcoef_buch_dimension,
+    beta_lrcoef_buch_interior_stats, beta_lrcoef_buch_interior_u128, lrcoef,
+    lrcoef_buch_counts_u128, lrcoef_buch_dimension, lrcoef_buch_interior_memo_stats,
     lrcoef_buch_interior_memo_u128, lrcoef_buch_interior_stats, lrcoef_buch_interior_u128,
-    LrCoefError,
+    LrBuchInteriorStats, LrCoefError,
 };
 
 fn main() {
@@ -540,6 +542,74 @@ fn main() {
                 }
             }
         }
+        Some("beta-lr") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lrcoef(&parts[0], &parts[1], &parts[2], &parts[3]).map_err(format_lrcoef_error)
+            }) {
+                Ok(coef) => println!("{coef}"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-buch-interior") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lrcoef_buch_interior_u128(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lrcoef_error)
+            }) {
+                Ok(coef) => println!("{coef}"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-buch-counts") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lrcoef_buch_counts_u128(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lrcoef_error)
+            }) {
+                Ok(counts) => {
+                    println!("full: {}", counts.full);
+                    println!("interior: {}", counts.interior);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-buch-interior-stats") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lrcoef_buch_interior_stats(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lrcoef_error)
+            }) {
+                Ok(stats) => print_buch_interior_stats(&stats),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-buch-dimension") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lrcoef_buch_dimension(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lrcoef_error)
+            }) {
+                Ok(Some(dimension)) => println!("{dimension}"),
+                Ok(None) => println!("empty"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Some("lr-stretch-hvector") => {
             let rest: Vec<String> = args.collect();
             match parse_partition_triple(&rest).and_then(|parts| {
@@ -575,7 +645,7 @@ fn main() {
             std::process::exit(2);
         }
         None => {
-            eprintln!("Usage: {program} <coef|mult|skew|coprod|tab> [arguments]");
+            eprintln!("Usage: {program} <coef|lr-buch-counts|beta-lr|...> [arguments]");
             std::process::exit(2);
         }
     }
@@ -608,6 +678,38 @@ fn parse_partition_triple(args: &[String]) -> Result<[Vec<i32>; 3], String> {
 
     if section != 2 {
         return Err("usage: coef OUTER - INNER1 - INNER2".to_string());
+    }
+
+    Ok(parts)
+}
+
+fn parse_partition_quad(args: &[String]) -> Result<[Vec<i32>; 4], String> {
+    let mut parts = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut section = 0usize;
+
+    for token in args {
+        if token == "-" {
+            section += 1;
+            if section >= parts.len() {
+                return Err("expected exactly three '-' separators".to_string());
+            }
+            continue;
+        }
+
+        for piece in token.split(',') {
+            let piece = piece.trim_matches(|ch| matches!(ch, '(' | ')' | '[' | ']'));
+            if piece.is_empty() {
+                continue;
+            }
+            let value = piece
+                .parse::<i32>()
+                .map_err(|_| format!("invalid integer '{piece}'"))?;
+            parts[section].push(value);
+        }
+    }
+
+    if section != 3 {
+        return Err("usage: beta-lr OUTER - INNER - CONTENT - BETA".to_string());
     }
 
     Ok(parts)
@@ -672,6 +774,24 @@ fn format_optional_usize(value: Option<usize>) -> String {
 
 fn format_optional_usize_vec(value: Option<&[usize]>) -> String {
     value.map_or_else(|| "-".to_string(), |value| format!("{value:?}"))
+}
+
+fn print_buch_interior_stats(stats: &LrBuchInteriorStats) {
+    println!("value: {}", stats.value);
+    println!("weak_tableaux: {}", stats.weak_tableaux);
+    println!("strict_tableaux: {}", stats.strict_tableaux);
+    println!(
+        "strict_lower_constraints: {}",
+        stats.strict_lower_constraints
+    );
+    println!(
+        "strict_diagonal_constraints: {}",
+        stats.strict_diagonal_constraints
+    );
+    println!(
+        "strict_yamanouchi_constraints: {}",
+        stats.strict_yamanouchi_constraints
+    );
 }
 
 fn format_lrcoef_error(error: LrCoefError) -> String {

@@ -57,6 +57,16 @@ pub struct LrBuchCounts {
     pub interior: u128,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BetaSkewShape {
+    outer: Vec<i32>,
+    inner: Vec<i32>,
+    content: Vec<i32>,
+    beta: Vec<i32>,
+    label_count: usize,
+    skew_size: i32,
+}
+
 pub(crate) struct LrBuchStretchCache {
     outer: Vec<i32>,
     inner: Vec<i32>,
@@ -119,6 +129,7 @@ struct BuchMemoCounter<'a> {
 
 struct BuchInteriorPruner<'a> {
     tight: &'a BuchTightFlags,
+    beta: &'a [i32],
     inner: Vec<u32>,
     increments: Vec<u32>,
     rows: usize,
@@ -141,6 +152,99 @@ pub fn lrcoef(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Result<u128, LrC
 pub fn lrcoef_i64(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Option<i64> {
     let coef = lrcoef(outer, inner1, inner2).ok()?;
     i64::try_from(coef).ok()
+}
+
+/// Count semistandard fillings whose reading word is Yamanouchi after a
+/// virtual prefix of content `beta`.
+pub fn beta_lrcoef(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<u128, LrCoefError> {
+    let Some(shape) = prepare_beta_shape(outer, inner, content, beta)? else {
+        return Ok(0);
+    };
+    if shape.skew_size == 0 {
+        return Ok(1);
+    }
+    beta_lrcoef_count(&shape)
+}
+
+/// Count relative interior lattice points for the beta-shifted LR polytope.
+pub fn beta_lrcoef_buch_interior_u128(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<u128, LrCoefError> {
+    Ok(beta_lrcoef_buch_interior_stats(outer, inner, content, beta)?.value)
+}
+
+/// Count beta-shifted relative interior points with Buch-search diagnostics.
+pub fn beta_lrcoef_buch_interior_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<LrBuchInteriorStats, LrCoefError> {
+    let Some(shape) = prepare_beta_shape(outer, inner, content, beta)? else {
+        return Ok(zero_buch_interior_stats());
+    };
+    if shape.skew_size == 0 {
+        return Ok(one_buch_interior_stats());
+    }
+
+    let Some(tight_data) = buch_tight_data_beta(&shape)? else {
+        return Ok(zero_buch_interior_stats());
+    };
+    let tight = tight_data.tight;
+    let weak_tableaux = tight_data.weak_tableaux;
+
+    let (strict_lower, strict_diagonal, strict_yamanouchi) = tight.strict_counts();
+    let strict_tableaux = beta_lrcoef_count_strict_tableaux(&shape, &tight)?;
+
+    Ok(LrBuchInteriorStats {
+        value: strict_tableaux,
+        weak_tableaux,
+        strict_tableaux,
+        strict_lower_constraints: strict_lower,
+        strict_diagonal_constraints: strict_diagonal,
+        strict_yamanouchi_constraints: strict_yamanouchi,
+    })
+}
+
+/// Count both full and relative-interior beta-shifted LR lattice points.
+pub fn beta_lrcoef_buch_counts_u128(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<LrBuchCounts, LrCoefError> {
+    let stats = beta_lrcoef_buch_interior_stats(outer, inner, content, beta)?;
+    Ok(LrBuchCounts {
+        full: stats.weak_tableaux,
+        interior: stats.strict_tableaux,
+    })
+}
+
+/// Dimension of the beta-shifted LR/Yamanouchi polytope.
+pub fn beta_lrcoef_buch_dimension(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<Option<usize>, LrCoefError> {
+    let Some(shape) = prepare_beta_shape(outer, inner, content, beta)? else {
+        return Ok(None);
+    };
+    if shape.skew_size == 0 {
+        return Ok(Some(0));
+    }
+    let Some(tight_data) = buch_tight_data_beta(&shape)? else {
+        return Ok(None);
+    };
+    Ok(Some(buch_dimension_from_tight_flags(&tight_data.tight)))
 }
 
 /// Count relative interior lattice points using Buch's tableau search order.
@@ -293,6 +397,9 @@ fn part_entry(part: &[i32], index: usize) -> i32 {
 fn part_sum(part: &[i32]) -> Result<i32, LrCoefError> {
     let mut sum = 0i32;
     for &part in part {
+        if part < 0 {
+            return Err(LrCoefError::InvalidPartition);
+        }
         sum = sum
             .checked_add(part)
             .ok_or(LrCoefError::ArithmeticOverflow)?;
@@ -332,6 +439,82 @@ fn partition_to_u32_padded(parts: &[i32], len: usize) -> Result<Vec<u32>, LrCoef
 
 fn has_positive_part_beyond(part: &[i32], index: usize) -> bool {
     part.get(index).is_some_and(|&part| part > 0)
+}
+
+fn trim_vector(values: &[i32]) -> Vec<i32> {
+    values[..part_length(values)].to_vec()
+}
+
+fn valid_nonnegative_vector(values: &[i32]) -> bool {
+    values.iter().all(|&value| value >= 0)
+}
+
+fn prepare_beta_shape(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<Option<BetaSkewShape>, LrCoefError> {
+    if !valid_partition(outer)
+        || !valid_partition(inner)
+        || !valid_nonnegative_vector(content)
+        || !valid_partition(beta)
+    {
+        return Err(LrCoefError::InvalidPartition);
+    }
+
+    let outer = trim_vector(outer);
+    let inner = trim_vector(inner);
+    let content = trim_vector(content);
+    let beta = trim_vector(beta);
+    if has_positive_part_beyond(&inner, outer.len()) {
+        return Ok(None);
+    }
+
+    let outer_size = part_sum(&outer)?;
+    let inner_size = part_sum(&inner)?;
+    if inner_size > outer_size {
+        return Ok(None);
+    }
+    for (row, &inner_part) in inner.iter().enumerate() {
+        if inner_part > part_entry(&outer, row) {
+            return Ok(None);
+        }
+    }
+
+    let content_size = part_sum(&content)?;
+    let skew_size = outer_size
+        .checked_sub(inner_size)
+        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    if skew_size != content_size {
+        return Ok(None);
+    }
+    if skew_size == 0 {
+        return Ok((outer == inner).then_some(BetaSkewShape {
+            outer,
+            inner,
+            content,
+            beta,
+            label_count: 0,
+            skew_size,
+        }));
+    }
+    if outer.is_empty() {
+        return Ok(None);
+    }
+
+    let label_count = part_length(&content).max(part_length(&beta));
+    if label_count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(BetaSkewShape {
+        outer,
+        inner,
+        content,
+        beta,
+        label_count,
+        skew_size,
+    }))
 }
 
 pub(crate) fn optim_coef(
@@ -796,7 +979,8 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
     let mut coef = 0u128;
 
     loop {
-        while x > above
+        while x > 0
+            && x > above
             && (counts[x as usize].cont == counts[x as usize].supply
                 || counts[x as usize].cont == counts[(x - 1) as usize].cont)
         {
@@ -823,16 +1007,90 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
             se_supply = boxes[boxes[pos].east].se_supply;
             x = boxes[boxes[pos].east].value;
             above = boxes[boxes[pos].north].value;
-            while x > boxes[pos].max {
+            while x > 0 && x > boxes[pos].max {
                 se_supply += counts[x as usize].supply - counts[x as usize].cont;
                 x -= 1;
             }
-            while x > above && se_supply < boxes[pos].se_sz {
+            while x > 0 && x > above && se_supply < boxes[pos].se_sz {
                 se_supply += counts[x as usize].supply - counts[x as usize].cont;
                 x -= 1;
             }
         } else {
             coef = coef.checked_add(1).ok_or(LrCoefError::ArithmeticOverflow)?;
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+    }
+
+    Ok(coef)
+}
+
+fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
+    let mut boxes = new_skewtab(
+        &shape.outer,
+        &shape.inner,
+        shape.label_count,
+        shape.skew_size,
+    )?;
+    let mut counts = new_content_beta(&shape.content, &shape.beta, shape.label_count)?;
+
+    let n = shape.skew_size;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north].value;
+    let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut se_supply = 0;
+    let mut coef = 0u128;
+
+    loop {
+        while x > 0
+            && x > above
+            && (counts[x as usize].cont == counts[x as usize].supply
+                || counts[x as usize].cont == counts[(x - 1) as usize].cont)
+        {
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+
+        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        } else if pos + 1 < n as usize {
+            boxes[pos].se_supply = se_supply;
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            pos += 1;
+            se_supply = boxes[boxes[pos].east].se_supply;
+            x = boxes[boxes[pos].east].value;
+            above = boxes[boxes[pos].north].value;
+            while x > 0 && x > boxes[pos].max {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+            while x > 0 && x > above && se_supply < boxes[pos].se_sz {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+        } else {
+            coef = coef.checked_add(1).ok_or(LrCoefError::ArithmeticOverflow)?;
+            if pos == 0 {
+                break;
+            }
             pos -= 1;
             se_supply = boxes[pos].se_supply;
             above = boxes[boxes[pos].north].value;
@@ -957,6 +1215,30 @@ fn buch_tight_data(
     }
 }
 
+fn buch_tight_data_beta(shape: &BetaSkewShape) -> Result<Option<BuchTightData>, LrCoefError> {
+    let rows = shape.outer.len();
+    let steps = shape.label_count;
+    let mut tight = BuchTightFlags::new(steps, rows);
+    let mut weak_tableaux = 0u128;
+    beta_lrcoef_for_each_tableau(shape, |boxes| {
+        weak_tableaux = weak_tableaux
+            .checked_add(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+        let increments = tableau_increments(boxes, rows, steps)?;
+        tight.observe_tableau_beta(&shape.inner, &increments, &shape.beta);
+        Ok(())
+    })?;
+
+    if weak_tableaux == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(BuchTightData {
+            tight,
+            weak_tableaux,
+        }))
+    }
+}
+
 fn lrcoef_for_each_tableau<F>(
     outer: &[i32],
     inner: &[i32],
@@ -985,7 +1267,8 @@ where
     let mut se_supply = n - counts[1].supply;
 
     loop {
-        while x > above
+        while x > 0
+            && x > above
             && (counts[x as usize].cont == counts[x as usize].supply
                 || counts[x as usize].cont == counts[(x - 1) as usize].cont)
         {
@@ -1042,6 +1325,88 @@ where
     Ok(())
 }
 
+fn beta_lrcoef_for_each_tableau<F>(shape: &BetaSkewShape, mut visit: F) -> Result<(), LrCoefError>
+where
+    F: FnMut(&[LrCoefBox]) -> Result<(), LrCoefError>,
+{
+    if shape.skew_size == 0 {
+        return Ok(());
+    }
+
+    let mut boxes = new_skewtab(
+        &shape.outer,
+        &shape.inner,
+        shape.label_count,
+        shape.skew_size,
+    )?;
+    let mut counts = new_content_beta(&shape.content, &shape.beta, shape.label_count)?;
+
+    let n = shape.skew_size;
+    let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north].value;
+    let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut se_supply = 0;
+
+    loop {
+        while x > 0
+            && x > above
+            && (counts[x as usize].cont == counts[x as usize].supply
+                || counts[x as usize].cont == counts[(x - 1) as usize].cont)
+        {
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+
+        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        } else if pos + 1 < real_boxes {
+            boxes[pos].se_supply = se_supply;
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            pos += 1;
+            se_supply = boxes[boxes[pos].east].se_supply;
+            x = boxes[boxes[pos].east].value;
+            above = boxes[boxes[pos].north].value;
+            while x > 0 && x > boxes[pos].max {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+            while x > 0 && x > above && se_supply < boxes[pos].se_sz {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+        } else {
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            visit(&boxes[..real_boxes])?;
+            counts[x as usize].cont -= 1;
+
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+    }
+
+    Ok(())
+}
+
 fn lrcoef_count_strict_tableaux(
     outer: &[i32],
     inner: &[i32],
@@ -1058,7 +1423,7 @@ fn lrcoef_count_strict_tableaux(
 
     let mut boxes = new_skewtab(outer, inner, part_length(content), content_sum)?;
     let mut counts = new_content(content);
-    let mut pruner = BuchInteriorPruner::new(tight, inner)?;
+    let mut pruner = BuchInteriorPruner::new(tight, inner, &[])?;
 
     let n = content_sum;
     let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
@@ -1069,7 +1434,8 @@ fn lrcoef_count_strict_tableaux(
     let mut coef = 0u128;
 
     loop {
-        while x > above
+        while x > 0
+            && x > above
             && (counts[x as usize].cont == counts[x as usize].supply
                 || counts[x as usize].cont == counts[(x - 1) as usize].cont)
         {
@@ -1099,11 +1465,108 @@ fn lrcoef_count_strict_tableaux(
                 se_supply = boxes[boxes[pos].east].se_supply;
                 x = boxes[boxes[pos].east].value;
                 above = boxes[boxes[pos].north].value;
-                while x > boxes[pos].max {
+                while x > 0 && x > boxes[pos].max {
                     se_supply += counts[x as usize].supply - counts[x as usize].cont;
                     x -= 1;
                 }
-                while x > above && se_supply < boxes[pos].se_sz {
+                while x > 0 && x > above && se_supply < boxes[pos].se_sz {
+                    se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                    x -= 1;
+                }
+            } else {
+                pruner.unplace(&boxes[pos])?;
+                counts[x as usize].cont -= 1;
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+        } else {
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            if pruner.place(&boxes[pos], true)? && pruner.is_complete_relative_interior() {
+                coef = coef.checked_add(1).ok_or(LrCoefError::ArithmeticOverflow)?;
+            }
+            pruner.unplace(&boxes[pos])?;
+            counts[x as usize].cont -= 1;
+
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            pruner.unplace(&boxes[pos])?;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+    }
+
+    Ok(coef)
+}
+
+fn beta_lrcoef_count_strict_tableaux(
+    shape: &BetaSkewShape,
+    tight: &BuchTightFlags,
+) -> Result<u128, LrCoefError> {
+    if shape.skew_size == 0 {
+        return Ok(1);
+    }
+
+    let mut boxes = new_skewtab(
+        &shape.outer,
+        &shape.inner,
+        shape.label_count,
+        shape.skew_size,
+    )?;
+    let mut counts = new_content_beta(&shape.content, &shape.beta, shape.label_count)?;
+    let mut pruner = BuchInteriorPruner::new(tight, &shape.inner, &shape.beta)?;
+
+    let n = shape.skew_size;
+    let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north].value;
+    let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut se_supply = 0;
+    let mut coef = 0u128;
+
+    loop {
+        while x > 0
+            && x > above
+            && (counts[x as usize].cont == counts[x as usize].supply
+                || counts[x as usize].cont == counts[(x - 1) as usize].cont)
+        {
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+
+        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            pruner.unplace(&boxes[pos])?;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        } else if pos + 1 < real_boxes {
+            boxes[pos].se_supply = se_supply;
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            let row_complete = boxes[pos + 1].row != boxes[pos].row;
+            if pruner.place(&boxes[pos], row_complete)? {
+                pos += 1;
+                se_supply = boxes[boxes[pos].east].se_supply;
+                x = boxes[boxes[pos].east].value;
+                above = boxes[boxes[pos].north].value;
+                while x > 0 && x > boxes[pos].max {
+                    se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                    x -= 1;
+                }
+                while x > 0 && x > above && se_supply < boxes[pos].se_sz {
                     se_supply += counts[x as usize].supply - counts[x as usize].cont;
                     x -= 1;
                 }
@@ -1200,6 +1663,37 @@ fn new_content(content: &[i32]) -> Vec<LrCoefContent> {
     result
 }
 
+fn new_content_beta(
+    content: &[i32],
+    beta: &[i32],
+    label_count: usize,
+) -> Result<Vec<LrCoefContent>, LrCoefError> {
+    debug_assert!(label_count > 0);
+    let mut result = vec![LrCoefContent::default(); label_count + 1];
+    for label in 1..=label_count {
+        let beta_value = part_entry(beta, label - 1);
+        let content_value = part_entry(content, label - 1);
+        if beta_value < 0 || content_value < 0 {
+            return Err(LrCoefError::InvalidPartition);
+        }
+        result[label].cont = beta_value;
+        result[label].supply = beta_value
+            .checked_add(content_value)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+    }
+    result[0].cont = result[1].supply;
+    result[0].supply = result[1].supply;
+    Ok(result)
+}
+
+fn beta_entry_u64(beta: &[i32], index: usize) -> u64 {
+    beta.get(index)
+        .copied()
+        .unwrap_or(0)
+        .try_into()
+        .expect("beta was validated as nonnegative")
+}
+
 fn new_skewtab(
     outer: &[i32],
     inner: &[i32],
@@ -1272,6 +1766,10 @@ impl BuchTightFlags {
     }
 
     fn observe_tableau(&mut self, inner: &[i32], increments: &[u32]) {
+        self.observe_tableau_beta(inner, increments, &[]);
+    }
+
+    fn observe_tableau_beta(&mut self, inner: &[i32], increments: &[u32], beta: &[i32]) {
         let rows = self.lower.first().map_or(0, Vec::len);
         let mut shape = (0..rows)
             .map(|row| part_entry(inner, row) as u32)
@@ -1294,7 +1792,9 @@ impl BuchTightFlags {
                 for row in 0..rows {
                     let current_prefix = prefix_sum(increments, rows, step, row + 1);
                     let previous_prefix = prefix_sum(increments, rows, step - 1, row);
-                    if current_prefix < previous_prefix {
+                    let current = beta_entry_u64(beta, step) + u64::from(current_prefix);
+                    let previous = beta_entry_u64(beta, step - 1) + u64::from(previous_prefix);
+                    if current < previous {
                         self.yamanouchi[step][row] = false;
                     }
                 }
@@ -1470,7 +1970,7 @@ impl<'a> BuchMemoCounter<'a> {
 }
 
 impl<'a> BuchInteriorPruner<'a> {
-    fn new(tight: &'a BuchTightFlags, inner: &[i32]) -> Result<Self, LrCoefError> {
+    fn new(tight: &'a BuchTightFlags, inner: &[i32], beta: &'a [i32]) -> Result<Self, LrCoefError> {
         let rows = tight.lower.first().map_or(0, Vec::len);
         let steps = tight.lower.len();
         let inner = (0..rows)
@@ -1484,6 +1984,7 @@ impl<'a> BuchInteriorPruner<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             tight,
+            beta,
             inner,
             increments: vec![0; rows.saturating_mul(steps)],
             rows,
@@ -1532,7 +2033,7 @@ impl<'a> BuchInteriorPruner<'a> {
         }
         for step in 1..self.steps {
             if !self.tight.yamanouchi[step][row]
-                && self.prefix_for_step(step, row + 1) >= self.prefix_for_step(step - 1, row)
+                && self.beta_yamanouchi_lhs(step, row + 1) >= self.beta_yamanouchi_rhs(step, row)
             {
                 return false;
             }
@@ -1553,7 +2054,7 @@ impl<'a> BuchInteriorPruner<'a> {
             }
             if step > 0
                 && !self.tight.yamanouchi[step][row]
-                && self.prefix_for_step(step, row + 1) >= self.prefix_for_step(step - 1, row)
+                && self.beta_yamanouchi_lhs(step, row + 1) >= self.beta_yamanouchi_rhs(step, row)
             {
                 return false;
             }
@@ -1589,6 +2090,14 @@ impl<'a> BuchInteriorPruner<'a> {
 
     fn prefix_for_step(&self, step: usize, row_count: usize) -> u32 {
         (0..row_count).map(|row| self.increment(step, row)).sum()
+    }
+
+    fn beta_yamanouchi_lhs(&self, step: usize, row_count: usize) -> u64 {
+        beta_entry_u64(self.beta, step) + u64::from(self.prefix_for_step(step, row_count))
+    }
+
+    fn beta_yamanouchi_rhs(&self, step: usize, row_count: usize) -> u64 {
+        beta_entry_u64(self.beta, step - 1) + u64::from(self.prefix_for_step(step - 1, row_count))
     }
 }
 
@@ -1756,6 +2265,7 @@ fn one_buch_interior_memo_stats() -> LrBuchInteriorMemoStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kostka_fast::{skew_kostka_fast_u128, skew_kostka_interior_u128};
     use crate::lr_gt::{lrcoef_gt_dimension, lrcoef_gt_interior_dfs_u128};
 
     #[test]
@@ -1777,11 +2287,115 @@ mod tests {
             lrcoef(&[2, -1], &[1], &[1]),
             Err(LrCoefError::InvalidPartition)
         );
+        assert_eq!(
+            beta_lrcoef(&[1], &[], &[1], &[0, 1]),
+            Err(LrCoefError::InvalidPartition)
+        );
+        assert_eq!(
+            beta_lrcoef(&[1], &[], &[-1], &[]),
+            Err(LrCoefError::InvalidPartition)
+        );
     }
 
     #[test]
     fn trims_trailing_zeroes_like_partitions() {
         assert_eq!(lrcoef(&[3, 2, 1, 0], &[2, 1, 0], &[2, 1, 0]), Ok(2));
+    }
+
+    #[test]
+    fn beta_zero_matches_lrcoef_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            assert_eq!(
+                                beta_lrcoef(&outer, &inner, &content, &[]).unwrap(),
+                                lrcoef(&outer, &inner, &content).unwrap(),
+                                "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn beta_zero_interior_matches_buch_interior_for_small_triples() {
+        for outer_size in 0..=5 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            assert_eq!(
+                                beta_lrcoef_buch_interior_u128(&outer, &inner, &content, &[])
+                                    .unwrap(),
+                                lrcoef_buch_interior_u128(&outer, &inner, &content).unwrap(),
+                                "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn large_beta_matches_skew_kostka() {
+        let cases = [
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[2, 1][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[1, 2][..]),
+            (&[4, 2, 1][..], &[2, 1][..], &[2, 1, 1][..]),
+            (&[6, 4, 2][..], &[3, 2, 1][..], &[3, 2, 1][..]),
+            (
+                &[5, 3, 2, 1][..],
+                &[2, 1][..],
+                &[1, 1, 1, 1, 1, 1, 1, 1][..],
+            ),
+        ];
+        for (outer, inner, content) in cases {
+            let beta = strict_dominating_beta(content);
+            assert_eq!(
+                beta_lrcoef(outer, inner, content, &beta).unwrap(),
+                skew_kostka_fast_u128(outer, inner, content).unwrap(),
+                "outer={outer:?} inner={inner:?} content={content:?} beta={beta:?}"
+            );
+            assert_eq!(
+                beta_lrcoef_buch_interior_u128(outer, inner, content, &beta).unwrap(),
+                skew_kostka_interior_u128(outer, inner, content).unwrap(),
+                "interior outer={outer:?} inner={inner:?} content={content:?} beta={beta:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn beta_counts_report_full_and_interior() {
+        let outer = [6, 4, 2];
+        let inner = [3, 2, 1];
+        let content = [3, 2, 1];
+        let beta = strict_dominating_beta(&content);
+        let counts = beta_lrcoef_buch_counts_u128(&outer, &inner, &content, &beta).unwrap();
+
+        assert_eq!(
+            counts.full,
+            skew_kostka_fast_u128(&outer, &inner, &content).unwrap()
+        );
+        assert_eq!(
+            counts.interior,
+            skew_kostka_interior_u128(&outer, &inner, &content).unwrap()
+        );
+        assert!(beta_lrcoef_buch_dimension(&outer, &inner, &content, &beta)
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -1997,5 +2611,16 @@ mod tests {
             }
         }
         true
+    }
+
+    fn strict_dominating_beta(content: &[i32]) -> Vec<i32> {
+        let len = part_length(content);
+        let mut beta = vec![0; len];
+        let mut suffix = 0i32;
+        for index in (0..len).rev() {
+            beta[index] = suffix;
+            suffix += part_entry(content, index) + 1;
+        }
+        beta
     }
 }
