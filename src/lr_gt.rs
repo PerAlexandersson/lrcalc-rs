@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use crate::kostka_fast::{
     kostka_counts_stats, kostka_fast_stats, KostkaCountsStats, KostkaFastError, KostkaFastStats,
 };
-use crate::lrcoef::{optim_coef, LrCoefError, OptimizedCoef};
+use crate::lrcoef::{lrcoef, optim_coef, LrCoefError, OptimizedCoef};
 use num_rational::BigRational;
 use num_traits::Zero;
 
@@ -87,6 +87,32 @@ pub struct LrGtHybridStats {
     pub mode: LrGtHybridMode,
     pub enforced_rows: Vec<usize>,
     pub stats: LrGtStats,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LrTableauHybridMode {
+    KostkaTranslation,
+    CertifiedPartialCollapse,
+    BuchFallback,
+}
+
+impl LrTableauHybridMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::KostkaTranslation => "kostka",
+            Self::CertifiedPartialCollapse => "certified-mask",
+            Self::BuchFallback => "buch-fallback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrTableauHybridStats {
+    pub mode: LrTableauHybridMode,
+    pub enforced_rows: Vec<usize>,
+    pub value: u128,
+    pub peak_states: Option<usize>,
+    pub levels: Option<Vec<usize>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -372,6 +398,51 @@ pub fn lrcoef_gt_hybrid_stats(
         mode,
         enforced_rows: partial.enforced_rows,
         stats: partial.stats,
+    })
+}
+
+/// Production-oriented full-count hybrid selector.
+///
+/// This keeps the fast tableau DP paths for exact Kostka translations and
+/// certified partial collapses, but uses Buch's branch-pruned tableau engine as
+/// the general fallback.
+pub fn lrcoef_tableau_hybrid_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrTableauHybridStats, LrGtError> {
+    if let Some(weight) = kostka_translation_weight(outer, inner) {
+        let stats = kostka_fast_stats(content, &weight).map_err(map_kostka_error)?;
+        return Ok(LrTableauHybridStats {
+            mode: LrTableauHybridMode::KostkaTranslation,
+            enforced_rows: Vec::new(),
+            value: stats.value,
+            peak_states: Some(stats.peak_states),
+            levels: Some(stats.levels),
+        });
+    }
+
+    let candidate = lrcoef_gt_partial_collapse_rows(outer, inner)?;
+    if !candidate.is_empty() {
+        let certified =
+            lrcoef_gt_yamanouchi_mask_certified_stats(outer, inner, content, &candidate)?;
+        if certified.omitted_constraints_forced {
+            return Ok(LrTableauHybridStats {
+                mode: LrTableauHybridMode::CertifiedPartialCollapse,
+                enforced_rows: candidate,
+                value: certified.stats.value,
+                peak_states: Some(certified.stats.peak_states),
+                levels: Some(certified.stats.levels),
+            });
+        }
+    }
+
+    Ok(LrTableauHybridStats {
+        mode: LrTableauHybridMode::BuchFallback,
+        enforced_rows: candidate,
+        value: lrcoef(outer, inner, content).map_err(map_lrcoef_error)?,
+        peak_states: None,
+        levels: None,
     })
 }
 
@@ -1234,6 +1305,10 @@ fn partial_collapse_rows_normalized(outer: &[u32], inner: &[u32]) -> Vec<usize> 
     };
 
     if part_u32(inner, last_defect) >= part_u32(outer, last_defect + 1) {
+        return Vec::new();
+    }
+
+    if last_defect.saturating_mul(2) > rows {
         return Vec::new();
     }
 
@@ -2560,7 +2635,7 @@ mod tests {
         );
         assert_eq!(
             lrcoef_gt_partial_collapse_rows(&[7, 6, 5, 4, 3, 2, 1], &[4, 4, 3, 2, 1]).unwrap(),
-            vec![0, 1, 2, 3, 4]
+            Vec::<usize>::new()
         );
     }
 
@@ -2664,6 +2739,44 @@ mod tests {
                             let gt = lrcoef_gt_u128(&outer, &inner, &content).unwrap();
                             assert_eq!(
                                 hybrid, gt,
+                                "outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tableau_hybrid_uses_buch_fallback_for_noncertified_case() {
+        let outer = [7, 4, 2, 1];
+        let inner = [4, 3, 1];
+        let content = [3, 2, 1];
+        let hybrid = lrcoef_tableau_hybrid_stats(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrTableauHybridMode::BuchFallback);
+        assert_eq!(hybrid.value, lrcoef(&outer, &inner, &content).unwrap());
+        assert_eq!(hybrid.peak_states, None);
+    }
+
+    #[test]
+    fn tableau_hybrid_matches_buch_for_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let hybrid = lrcoef_tableau_hybrid_stats(&outer, &inner, &content)
+                                .unwrap()
+                                .value;
+                            let buch = lrcoef(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                hybrid, buch,
                                 "outer={outer:?} inner={inner:?} content={content:?}"
                             );
                         }

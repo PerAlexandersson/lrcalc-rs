@@ -18,8 +18,8 @@ engines.
 - `src/lr_gt.rs` contains an independent GT-chain LR DP with stats, dimension,
   and relative-interior variants.  It also has a hybrid full-count selector
   that tries exact Kostka translation, certified partial Kostka collapse, then
-  GT-chain fallback.  The paired full/interior hybrid currently only uses the
-  exact Kostka translation dispatch.
+  Buch fallback.  The paired full/interior hybrid currently only uses the exact
+  Kostka translation dispatch.
 - `src/kostka_fast.rs` contains packed `u128` ordinary/skew Kostka DP and
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
@@ -47,8 +47,9 @@ The hybrid LR path recognized every case as `kostka` mode and ran at about
 `1.01x` the packed Kostka time, with matching full and interior counts.
 
 `timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3`
-passed on 2026-05-16.  The combined full-count hybrid was about `3.77x` faster
-than raw GT-chain full counts on the mixed exact/near-Kostka suite.
+passed on 2026-05-16.  The production tableau hybrid was about `382x` faster
+than raw GT-chain full counts and about `1.08x` faster than Buch full counts on
+the mixed exact/near-Kostka suite.
 
 ## Main Gaps
 

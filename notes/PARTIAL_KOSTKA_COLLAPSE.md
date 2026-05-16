@@ -39,15 +39,15 @@ Observed on 2026-05-16:
 | one tail defect | 2 | 1 | 2 | `-` | 2 | false | gt-fallback | 1 |
 | left extension defect | 4 | 4 | 8 | `0,1` | 4 | true | certified-mask | 6 |
 | right gap defect | 4 | 2 | 8 | `-` | 19 | false | gt-fallback | 3 |
-| irregular mixed | 7 | 56 | 84 | `0,1,2,3,4` | 56 | true | certified-mask | 76 |
+| irregular mixed | 7 | 56 | 84 | `-` | 929 | false | gt-fallback | 84 |
 
 Small survey through outer size `8`:
 
 - triples: `4136`
-- nonempty candidates: `2355`
-- exact candidates: `2885`
+- nonempty candidates: `1400`
+- exact candidates: `2724`
 - improved exact candidates: `5`
-- certified candidates: `2835`
+- certified candidates: `2662`
 - certified inexact candidates: `0`
 - certified improved candidates: `5`
 
@@ -59,9 +59,10 @@ correctly rejects the empty-mask relaxation.
 
 For near-Kostka shapes, the useful pattern is different: low row masks can
 recover the LR coefficient while dropping some prefix coordinates.  The current
-candidate only fires on underfull last defects.  This keeps the useful
-left-extension and irregular cases while avoiding exact-but-slower masks for
-tail/excess gap defects.
+candidate only fires on underfull last defects whose mask is at most half of
+the row set.  This keeps the useful left-extension cases while avoiding
+exact-but-slower masks and expensive failed certificates for tail, excess-gap,
+and large irregular defects.
 
 ## Next Step
 
@@ -85,5 +86,6 @@ Current mixed full-count benchmark:
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 ```
 
-The combined selector is about `3.77x` faster than raw GT-chain full counts on
-the exact/near-Kostka benchmark suite.
+The production tableau selector is about `382x` faster than raw GT-chain full
+counts and about `1.08x` faster than Buch full counts on the exact/near-Kostka
+benchmark suite.

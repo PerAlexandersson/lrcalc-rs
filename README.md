@@ -60,9 +60,9 @@ timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 ```
 
-Current `lr_hybrid_bench -- 5 3` result: the combined full-count hybrid was
-about `3.77x` faster than raw GT-chain full counts on a mixed exact/near-Kostka
-suite.
+Current `lr_hybrid_bench -- 5 3` result: the production tableau hybrid was
+about `382x` faster than raw GT-chain full counts and about `1.08x` faster than
+Buch full counts on a mixed exact/near-Kostka suite.
 
 Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
 `911x` slower than packed Kostka counts on the translated suite, while the
