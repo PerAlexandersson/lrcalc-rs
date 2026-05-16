@@ -11,6 +11,7 @@ pub mod kostka;
 pub mod kostka_fast;
 pub mod lr_ehrhart;
 pub mod lr_gt;
+pub mod lr_shifted;
 pub mod lr_signed;
 pub mod lrcoef;
 pub mod partition;

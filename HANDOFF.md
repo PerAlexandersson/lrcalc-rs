@@ -101,6 +101,14 @@ tableau selector was about `152x` faster than raw GT-chain paired counts.
 skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 `4.332s`, about `180x` slower.
 
+Shifted-Schur interval DP prototype added on 2026-05-16.  It computes scalar
+LR coefficients from the shifted LR recurrence after Buch `optim_coef`
+normalization and cross-checks against Buch on all small triples of size at
+most 6.  First release benchmarks are not competitive: the small suite was
+about `42x` slower than Buch, and the mixed suite about `7800x` slower, mainly
+from shifted-Schur base evaluations and interval-pair growth.  Keep this as an
+experimental comparison path, not production dispatch.
+
 ## Main Gaps
 
 - Replace the scalar-loop Schur product implementation with a shared expansion
@@ -130,6 +138,9 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
   dominates.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
+- If revisiting shifted-Schur interval DP, first replace determinant-per-base
+  shifted-Schur evaluation with a cached/evaluated basis method and add interval
+  state caps before testing large partitions.
 - Benchmark the production tableau paired selector on a broader non-Kostka
   corpus, since it now avoids the GT-chain fallback.
 - Use `notes/PARTIAL_KOSTKA_COLLAPSE.md` to guide larger certified partial-mask
