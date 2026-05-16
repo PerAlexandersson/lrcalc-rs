@@ -183,6 +183,12 @@ mod tests {
             .collect()
     }
 
+    fn sorted_term_map(terms: Vec<SchurTerm>) -> Vec<(Vec<i32>, u128)> {
+        let mut terms = term_map(terms);
+        terms.sort();
+        terms
+    }
+
     #[test]
     fn product_of_single_boxes() {
         let terms = schur_product_expansion(&[1], &[1], -1, -1).unwrap();
@@ -199,6 +205,77 @@ mod tests {
     }
 
     #[test]
+    fn product_respects_larger_row_and_column_bounds() {
+        let row_terms = schur_product_expansion(&[2, 1], &[2, 1], 3, -1).unwrap();
+        assert_eq!(
+            sorted_term_map(row_terms),
+            vec![
+                (vec![2, 2, 2], 1),
+                (vec![3, 2, 1], 2),
+                (vec![3, 3], 1),
+                (vec![4, 1, 1], 1),
+                (vec![4, 2], 1),
+            ]
+        );
+
+        let col_terms = schur_product_expansion(&[2, 1], &[2, 1], -1, 2).unwrap();
+        assert_eq!(
+            sorted_term_map(col_terms),
+            vec![(vec![2, 2, 1, 1], 1), (vec![2, 2, 2], 1)]
+        );
+    }
+
+    #[test]
+    fn product_of_two_hooks_matches_upstream_example() {
+        let terms = schur_product_expansion(&[2, 1], &[2, 1], -1, -1).unwrap();
+        assert_eq!(
+            sorted_term_map(terms),
+            vec![
+                (vec![2, 2, 1, 1], 1),
+                (vec![2, 2, 2], 1),
+                (vec![3, 1, 1, 1], 1),
+                (vec![3, 2, 1], 2),
+                (vec![3, 3], 1),
+                (vec![4, 1, 1], 1),
+                (vec![4, 2], 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn product_with_empty_partition_is_identity() {
+        let terms = schur_product_expansion(&[3, 1], &[], -1, -1).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![3, 1], 1)]);
+    }
+
+    #[test]
+    fn product_with_zero_row_bound_is_empty_unless_size_zero() {
+        let nonempty = schur_product_expansion(&[1], &[1], 0, -1).unwrap();
+        assert!(nonempty.is_empty());
+
+        let empty = schur_product_expansion(&[], &[], 0, -1).unwrap();
+        assert_eq!(term_map(empty), vec![(vec![], 1)]);
+    }
+
+    #[test]
+    fn product_trims_trailing_zeroes() {
+        let terms = schur_product_expansion(&[1, 0, 0], &[1, 0], -1, -1).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![2], 1), (vec![1, 1], 1)]);
+    }
+
+    #[test]
+    fn product_rejects_invalid_partitions() {
+        assert_eq!(
+            schur_product_expansion(&[1, 2], &[1], -1, -1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
+        assert_eq!(
+            schur_product_expansion(&[1], &[1, -1], -1, -1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
+    }
+
+    #[test]
     fn skew_two_cell_hook() {
         let terms = schur_skew_expansion(&[2, 1], &[1], -1).unwrap();
         assert_eq!(term_map(terms), vec![(vec![2], 1), (vec![1, 1], 1)]);
@@ -211,8 +288,47 @@ mod tests {
     }
 
     #[test]
+    fn skew_larger_example_matches_upstream_example() {
+        let terms = schur_skew_expansion(&[3, 2, 1], &[2, 1], -1).unwrap();
+        assert_eq!(
+            term_map(terms),
+            vec![(vec![3], 1), (vec![2, 1], 2), (vec![1, 1, 1], 1)]
+        );
+    }
+
+    #[test]
+    fn skew_row_bound_filters_long_content_partitions() {
+        let terms = schur_skew_expansion(&[3, 2, 1], &[2, 1], 2).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![3], 1), (vec![2, 1], 2)]);
+    }
+
+    #[test]
+    fn skew_with_empty_inner_is_identity() {
+        let terms = schur_skew_expansion(&[3, 1], &[], -1).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![3, 1], 1)]);
+    }
+
+    #[test]
+    fn skew_with_equal_shapes_is_empty_partition_term() {
+        let terms = schur_skew_expansion(&[3, 1], &[3, 1], -1).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![], 1)]);
+    }
+
+    #[test]
     fn skew_requires_inner_contained_in_outer() {
         let terms = schur_skew_expansion(&[2], &[2, 1], -1).unwrap();
         assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn skew_rejects_invalid_partitions() {
+        assert_eq!(
+            schur_skew_expansion(&[1, 2], &[1], -1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
+        assert_eq!(
+            schur_skew_expansion(&[2], &[-1], -1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
     }
 }

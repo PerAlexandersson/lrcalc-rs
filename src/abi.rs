@@ -963,6 +963,29 @@ mod tests {
         terms
     }
 
+    unsafe fn collect_lc_lengths(lc: *mut IvLinComb) -> Vec<(Vec<i32>, u32, i32)> {
+        let mut terms = Vec::new();
+        let mut itr = IvlcIter {
+            ht: ptr::null_mut(),
+            index: 0,
+            i: 0,
+        };
+        unsafe {
+            ivlc_first(lc, &mut itr);
+            while ivlc_good(&itr) != 0 {
+                let key = ivlc_key(&itr);
+                let mut partition = ivector_values(key).to_vec();
+                while partition.last() == Some(&0) {
+                    partition.pop();
+                }
+                terms.push((partition, (*key).length, ivlc_value(&itr)));
+                ivlc_next(&mut itr);
+            }
+        }
+        terms.sort();
+        terms
+    }
+
     #[test]
     fn ivector_allocation_copy_hash_and_sum() {
         unsafe {
@@ -1003,6 +1026,43 @@ mod tests {
             assert!(collect_lc_trimmed(lc).is_empty());
 
             iv_free(key);
+            ivlc_free_all(lc);
+        }
+    }
+
+    #[test]
+    fn ivlincomb_add_multiple_scales_terms() {
+        unsafe {
+            let src = ivlc_new(5, 2);
+            let dst = ivlc_new(5, 2);
+            assert!(!src.is_null());
+            assert!(!dst.is_null());
+            let key = vector_from_values(&[2]);
+            let hash = iv_hash(key) as u32;
+
+            assert_eq!(ivlc_add_element(src, 4, key, hash, LC_COPY_KEY), 0);
+            assert_eq!(ivlc_add_multiple(dst, 3, src, LC_COPY_KEY), 0);
+            assert_eq!(collect_lc_trimmed(dst), vec![(vec![2], 12)]);
+
+            iv_free(key);
+            ivlc_free_all(dst);
+            ivlc_free_all(src);
+        }
+    }
+
+    #[test]
+    fn ivlincomb_transfer_key_ownership_path() {
+        unsafe {
+            let lc = ivlc_new(5, 2);
+            assert!(!lc.is_null());
+            let key = vector_from_values(&[3, 1]);
+            let duplicate = vector_from_values(&[3, 1]);
+            let hash = iv_hash(key) as u32;
+
+            assert_eq!(ivlc_add_element(lc, 7, key, hash, LC_FREE_ZERO), 0);
+            assert_eq!(ivlc_add_element(lc, -2, duplicate, hash, LC_FREE_ZERO), 0);
+            assert_eq!(collect_lc_trimmed(lc), vec![(vec![3, 1], 5)]);
+
             ivlc_free_all(lc);
         }
     }
@@ -1049,6 +1109,57 @@ mod tests {
     }
 
     #[test]
+    fn schur_mult_respects_bounds_through_abi() {
+        unsafe {
+            let sh1 = vector_from_values(&[2, 1]);
+            let sh2 = vector_from_values(&[2, 1]);
+
+            let row_lc = schur_mult(sh1, sh2, 3, -1, -1);
+            assert!(!row_lc.is_null());
+            assert_eq!(
+                collect_lc_trimmed(row_lc),
+                vec![
+                    (vec![2, 2, 2], 1),
+                    (vec![3, 2, 1], 2),
+                    (vec![3, 3], 1),
+                    (vec![4, 1, 1], 1),
+                    (vec![4, 2], 1),
+                ]
+            );
+
+            let col_lc = schur_mult(sh1, sh2, -1, 2, -1);
+            assert!(!col_lc.is_null());
+            assert_eq!(
+                collect_lc_trimmed(col_lc),
+                vec![(vec![2, 2, 1, 1], 1), (vec![2, 2, 2], 1)]
+            );
+
+            ivlc_free_all(col_lc);
+            ivlc_free_all(row_lc);
+            iv_free(sh2);
+            iv_free(sh1);
+        }
+    }
+
+    #[test]
+    fn schur_mult_honors_part_size_padding() {
+        unsafe {
+            let sh1 = vector_from_values(&[1]);
+            let sh2 = vector_from_values(&[1]);
+            let lc = schur_mult(sh1, sh2, -1, -1, 4);
+            assert!(!lc.is_null());
+            assert_eq!(
+                collect_lc_lengths(lc),
+                vec![(vec![1, 1], 4, 1), (vec![2], 4, 1)]
+            );
+
+            ivlc_free_all(lc);
+            iv_free(sh2);
+            iv_free(sh1);
+        }
+    }
+
+    #[test]
     fn schur_skew_returns_linear_combination() {
         unsafe {
             let outer = vector_from_values(&[2, 1]);
@@ -1056,6 +1167,39 @@ mod tests {
             let lc = schur_skew(outer, inner, -1, -1);
             assert!(!lc.is_null());
             assert_eq!(collect_lc_trimmed(lc), vec![(vec![1, 1], 1), (vec![2], 1)]);
+
+            ivlc_free_all(lc);
+            iv_free(inner);
+            iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn schur_skew_respects_row_bound_through_abi() {
+        unsafe {
+            let outer = vector_from_values(&[3, 2, 1]);
+            let inner = vector_from_values(&[2, 1]);
+            let lc = schur_skew(outer, inner, 2, -1);
+            assert!(!lc.is_null());
+            assert_eq!(collect_lc_trimmed(lc), vec![(vec![2, 1], 2), (vec![3], 1)]);
+
+            ivlc_free_all(lc);
+            iv_free(inner);
+            iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn schur_skew_honors_part_size_padding() {
+        unsafe {
+            let outer = vector_from_values(&[2, 1]);
+            let inner = vector_from_values(&[1]);
+            let lc = schur_skew(outer, inner, -1, 3);
+            assert!(!lc.is_null());
+            assert_eq!(
+                collect_lc_lengths(lc),
+                vec![(vec![1, 1], 3, 1), (vec![2], 3, 1)]
+            );
 
             ivlc_free_all(lc);
             iv_free(inner);
