@@ -26,7 +26,8 @@ upstream C.
   translations and Buch full/interior counts otherwise.
 - Signed Kostka expansion for LR coefficients.
 - Fast ordinary and skew Kostka dynamic programs.
-- Ehrhart h-vector interpolation for pure stretched LR coefficients.
+- Ehrhart h-vector interpolation for pure stretched LR coefficients and the
+  beta-prefix generalization.
 - Benchmark binaries and shell scripts comparing Rust paths with upstream C.
 
 ## Not Yet Implemented
@@ -62,6 +63,7 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-buch-counts 5 3 1 - 3 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-hvector 5 3 1 - 3 2 1 - 2 1 - 2 0
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe

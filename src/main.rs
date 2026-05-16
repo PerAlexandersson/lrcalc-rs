@@ -4,8 +4,8 @@ use lrcalc::kostka_fast::{
     skew_kostka_fast_stats, skew_kostka_fast_u128, KostkaFastError,
 };
 use lrcalc::lr_ehrhart::{
-    format_bigint_vector, format_error as format_lr_stretch_error, lr_stretch_coefficient,
-    lr_stretch_h_vector,
+    beta_lr_stretch_coefficient, beta_lr_stretch_h_vector, format_bigint_vector,
+    format_error as format_lr_stretch_error, lr_stretch_coefficient, lr_stretch_h_vector,
 };
 use lrcalc::lr_gt::{
     lrcoef_gt_hybrid_stats, lrcoef_gt_interior_dfs_stats, lrcoef_gt_interior_dfs_u128,
@@ -640,6 +640,36 @@ fn main() {
                 }
             }
         }
+        Some("beta-lr-stretch-hvector") => {
+            let rest: Vec<String> = args.collect();
+            match parse_partition_quad(&rest).and_then(|parts| {
+                beta_lr_stretch_h_vector(&parts[0], &parts[1], &parts[2], &parts[3])
+                    .map_err(format_lr_stretch_error)
+            }) {
+                Ok(polynomial) => {
+                    println!("dimension: {}", polynomial.dimension);
+                    println!("h_vector: {}", format_bigint_vector(&polynomial.h_vector));
+                    println!("sample_points: {:?}", polynomial.sample_points);
+                }
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("beta-lr-stretch-eval") => {
+            let rest: Vec<String> = args.collect();
+            match parse_stretch_and_quad(&rest).and_then(|(stretch, parts)| {
+                beta_lr_stretch_coefficient(&parts[0], &parts[1], &parts[2], &parts[3], stretch)
+                    .map_err(format_lr_stretch_error)
+            }) {
+                Ok(coef) => println!("{coef}"),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Some(command) => {
             eprintln!("{program}: command '{command}' is not implemented yet");
             std::process::exit(2);
@@ -723,6 +753,18 @@ fn parse_stretch_and_triple(args: &[String]) -> Result<(u64, [Vec<i32>; 3]), Str
         .parse::<u64>()
         .map_err(|_| format!("invalid stretch factor '{stretch}'"))?;
     Ok((stretch, parse_partition_triple(rest)?))
+}
+
+fn parse_stretch_and_quad(args: &[String]) -> Result<(u64, [Vec<i32>; 4]), String> {
+    let Some((stretch, rest)) = args.split_first() else {
+        return Err(
+            "usage: beta-lr-stretch-eval STRETCH OUTER - INNER - CONTENT - BETA".to_string(),
+        );
+    };
+    let stretch = stretch
+        .parse::<u64>()
+        .map_err(|_| format!("invalid stretch factor '{stretch}'"))?;
+    Ok((stretch, parse_partition_quad(rest)?))
 }
 
 fn parse_partition_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {

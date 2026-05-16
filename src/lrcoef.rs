@@ -75,6 +75,15 @@ pub(crate) struct LrBuchStretchCache {
     dimension: usize,
 }
 
+pub(crate) struct BetaLrBuchStretchCache {
+    outer: Vec<i32>,
+    inner: Vec<i32>,
+    content: Vec<i32>,
+    beta: Vec<i32>,
+    tight: BuchTightFlags,
+    dimension: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct LrCoefBox {
     value: i32,
@@ -374,7 +383,79 @@ pub(crate) fn lrcoef_buch_stretched_counts_u128(
     })
 }
 
+pub(crate) fn beta_lrcoef_buch_stretch_cache(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<Option<BetaLrBuchStretchCache>, LrCoefError> {
+    let Some(shape) = prepare_beta_shape(outer, inner, content, beta)? else {
+        return Ok(None);
+    };
+    if shape.skew_size == 0 {
+        return Ok(Some(BetaLrBuchStretchCache {
+            outer: Vec::new(),
+            inner: Vec::new(),
+            content: Vec::new(),
+            beta: Vec::new(),
+            tight: BuchTightFlags::new(0, 0),
+            dimension: 0,
+        }));
+    }
+
+    let Some(tight_data) = buch_tight_data_beta(&shape)? else {
+        return Ok(None);
+    };
+    let dimension = buch_dimension_from_tight_flags(&tight_data.tight);
+    Ok(Some(BetaLrBuchStretchCache {
+        outer: shape.outer,
+        inner: shape.inner,
+        content: shape.content,
+        beta: shape.beta,
+        tight: tight_data.tight,
+        dimension,
+    }))
+}
+
+pub(crate) fn beta_lrcoef_buch_stretched_counts_u128(
+    cache: &BetaLrBuchStretchCache,
+    stretch: u64,
+) -> Result<LrBuchCounts, LrCoefError> {
+    if cache.dimension == 0 || stretch == 0 {
+        return Ok(LrBuchCounts {
+            full: 1,
+            interior: 1,
+        });
+    }
+
+    let outer = scale_partition_i32(&cache.outer, stretch)?;
+    let inner = scale_partition_i32(&cache.inner, stretch)?;
+    let content = scale_partition_i32(&cache.content, stretch)?;
+    let beta = scale_partition_i32(&cache.beta, stretch)?;
+    let skew_size = part_sum(&content)?;
+    let label_count = part_length(&content).max(part_length(&beta));
+    let shape = BetaSkewShape {
+        outer,
+        inner,
+        content,
+        beta,
+        label_count,
+        skew_size,
+    };
+
+    Ok(LrBuchCounts {
+        full: beta_lrcoef_count(&shape)?,
+        interior: beta_lrcoef_count_strict_tableaux(&shape, &cache.tight)?,
+    })
+}
+
 impl LrBuchStretchCache {
+    pub(crate) fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
+impl BetaLrBuchStretchCache {
     pub(crate) fn dimension(&self) -> usize {
         self.dimension
     }
@@ -441,6 +522,11 @@ fn has_positive_part_beyond(part: &[i32], index: usize) -> bool {
     part.get(index).is_some_and(|&part| part > 0)
 }
 
+fn partition_less_equal(inner: &[i32], outer: &[i32]) -> bool {
+    let len = inner.len().max(outer.len());
+    (0..len).all(|index| part_entry(inner, index) <= part_entry(outer, index))
+}
+
 fn trim_vector(values: &[i32]) -> Vec<i32> {
     values[..part_length(values)].to_vec()
 }
@@ -467,6 +553,11 @@ fn prepare_beta_shape(
     let inner = trim_vector(inner);
     let content = trim_vector(content);
     let beta = trim_vector(beta);
+
+    if beta.is_empty() && valid_partition(&content) {
+        return prepare_beta_shape_from_optimized(optim_coef(&outer, &inner, &content)?);
+    }
+
     if has_positive_part_beyond(&inner, outer.len()) {
         return Ok(None);
     }
@@ -503,6 +594,7 @@ fn prepare_beta_shape(
         return Ok(None);
     }
 
+    let (outer, inner) = compact_skew_shape(outer, inner);
     let label_count = part_length(&content).max(part_length(&beta));
     if label_count == 0 {
         return Ok(None);
@@ -515,6 +607,108 @@ fn prepare_beta_shape(
         label_count,
         skew_size,
     }))
+}
+
+fn prepare_beta_shape_from_optimized(
+    optimized: OptimizedCoef,
+) -> Result<Option<BetaSkewShape>, LrCoefError> {
+    match optimized {
+        OptimizedCoef::Zero => Ok(None),
+        OptimizedCoef::One => Ok(Some(BetaSkewShape {
+            outer: Vec::new(),
+            inner: Vec::new(),
+            content: Vec::new(),
+            beta: Vec::new(),
+            label_count: 0,
+            skew_size: 0,
+        })),
+        OptimizedCoef::Count(shape) => {
+            let skew_size = part_sum(&shape.content)?;
+            let label_count = part_length(&shape.content);
+            Ok(Some(BetaSkewShape {
+                outer: shape.outer,
+                inner: shape.inner,
+                content: shape.content,
+                beta: Vec::new(),
+                label_count,
+                skew_size,
+            }))
+        }
+    }
+}
+
+fn compact_skew_shape(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+    loop {
+        let previous_outer = outer.clone();
+        let previous_inner = inner.clone();
+
+        (outer, inner) = remove_empty_skew_rows(&outer, &inner);
+        (outer, inner) = remove_empty_skew_columns(outer, inner);
+        outer = trim_vector(&outer);
+        inner = trim_vector(&inner);
+
+        debug_assert!(valid_partition(&outer));
+        debug_assert!(valid_partition(&inner));
+        debug_assert!(partition_less_equal(&inner, &outer));
+
+        if outer == previous_outer && inner == previous_inner {
+            return (outer, inner);
+        }
+    }
+}
+
+fn remove_empty_skew_rows(outer: &[i32], inner: &[i32]) -> (Vec<i32>, Vec<i32>) {
+    let rows = outer.len().max(inner.len());
+    let mut compact_outer = Vec::with_capacity(rows);
+    let mut compact_inner = Vec::with_capacity(rows);
+
+    for row in 0..rows {
+        let outer_part = part_entry(outer, row);
+        let inner_part = part_entry(inner, row);
+        if outer_part != inner_part {
+            compact_outer.push(outer_part);
+            compact_inner.push(inner_part);
+        }
+    }
+
+    (trim_vector(&compact_outer), trim_vector(&compact_inner))
+}
+
+fn remove_empty_skew_columns(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+    let mut column = 1i32;
+    loop {
+        let Some(&max_outer) = outer.first() else {
+            return (outer, inner);
+        };
+        if column > max_outer {
+            return (trim_vector(&outer), trim_vector(&inner));
+        }
+
+        let has_skew_cell = (0..outer.len())
+            .any(|row| part_entry(&inner, row) < column && column <= part_entry(&outer, row));
+        if has_skew_cell {
+            column += 1;
+            continue;
+        }
+
+        let has_diagram_cell = outer.iter().any(|&part| part >= column);
+        if !has_diagram_cell {
+            return (trim_vector(&outer), trim_vector(&inner));
+        }
+
+        for part in &mut outer {
+            if *part >= column {
+                *part -= 1;
+            }
+        }
+        for part in &mut inner {
+            if *part >= column {
+                *part -= 1;
+            }
+        }
+        outer = trim_vector(&outer);
+        inner = trim_vector(&inner);
+    }
 }
 
 pub(crate) fn optim_coef(
@@ -2583,6 +2777,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn beta_stretch_cache_counts_match_uncached_counts() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..], &[][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[2, 1][..], &[2, 0][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[1, 2][..], &[3, 0][..]),
+            (&[5, 2][..], &[3][..], &[2, 2][..], &[3, 0][..]),
+        ];
+
+        for (outer, inner, content, beta) in cases {
+            let cache = beta_lrcoef_buch_stretch_cache(outer, inner, content, beta)
+                .unwrap()
+                .expect("nonempty beta stretch cache");
+            for stretch in 1..=3 {
+                let cached = beta_lrcoef_buch_stretched_counts_u128(&cache, stretch)
+                    .unwrap_or_else(|_| panic!("cached count failed at stretch {stretch}"));
+                let scaled_outer = scale_partition_i32(outer, stretch).unwrap();
+                let scaled_inner = scale_partition_i32(inner, stretch).unwrap();
+                let scaled_content = scale_partition_i32(content, stretch).unwrap();
+                let scaled_beta = scale_partition_i32(beta, stretch).unwrap();
+                let direct = beta_lrcoef_buch_counts_u128(
+                    &scaled_outer,
+                    &scaled_inner,
+                    &scaled_content,
+                    &scaled_beta,
+                )
+                .unwrap_or_else(|_| panic!("direct count failed at stretch {stretch}"));
+                assert_eq!(
+                    cached, direct,
+                    "outer={outer:?} inner={inner:?} content={content:?} beta={beta:?} stretch={stretch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn beta_compaction_removes_empty_skew_columns_in_cache() {
+        let cache = beta_lrcoef_buch_stretch_cache(&[5, 2], &[3], &[2, 2], &[3, 0])
+            .unwrap()
+            .expect("nonempty beta stretch cache");
+        assert_eq!(cache.outer, vec![4, 2]);
+        assert_eq!(cache.inner, vec![2]);
     }
 
     fn partitions_of(n: i32) -> Vec<Vec<i32>> {

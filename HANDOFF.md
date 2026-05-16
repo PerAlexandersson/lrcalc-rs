@@ -25,7 +25,8 @@ engines.
 - `src/kostka_fast.rs` contains packed `u128` ordinary/skew Kostka DP and
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
-- `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families.
+- `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families
+  and beta-prefix stretched families.
 - CLI commands expose the coefficient engines, beta-prefix LR counts, and
   diagnostic/stat modes, but not upstream `mult`, `skew`, `coprod`, `tab`, or
   `schubmult` behavior.
@@ -49,6 +50,11 @@ Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
 dominating partition beta, beta counts match skew Kostka full/interior counts
 on representative cases.
+
+Beta-prefix stretch interpolation passed on 2026-05-16.  The beta stretch cache
+compacts the base skew diagram, stores tight facets and dimension, then samples
+`t*outer/t*inner`, `t*content`, and `t*beta` together.  `beta=[]` specializes to
+the ordinary LR stretch polynomial in tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
 passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
@@ -98,8 +104,9 @@ skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 - Extend certified partial collapse to paired full/interior counts only after a
   safe interior certificate is available; for now paired counts use Buch
   fallback outside exact Kostka translations.
-- Use the beta-prefix LR API as the uniform surface for interpolation
-  experiments that move between ordinary LR and skew Kostka behavior.
+- Benchmark beta-prefix stretch interpolation on larger skew Kostka-like
+  families, especially cases where empty-row/empty-column compactification is
+  substantial.
 
 ## Notes
 

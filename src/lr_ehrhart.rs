@@ -1,8 +1,9 @@
 //! Ehrhart interpolation for stretched Littlewood-Richardson coefficients.
 
 use crate::lrcoef::{
-    lrcoef_buch_stretch_cache, lrcoef_buch_stretched_counts_u128, LrBuchCounts, LrBuchStretchCache,
-    LrCoefError,
+    beta_lrcoef_buch_stretch_cache, beta_lrcoef_buch_stretched_counts_u128,
+    lrcoef_buch_stretch_cache, lrcoef_buch_stretched_counts_u128, BetaLrBuchStretchCache,
+    LrBuchCounts, LrBuchStretchCache, LrCoefError,
 };
 use num_bigint::{BigInt, ToBigInt};
 use num_rational::BigRational;
@@ -51,6 +52,33 @@ pub fn lr_stretch_coefficient(
     ))
 }
 
+/// Compute the Ehrhart h*-vector for the beta-shifted stretch
+/// `t ↦ beta_lrcoef(t outer, t inner, t content, t beta)`.
+pub fn beta_lr_stretch_h_vector(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<LrStretchPolynomial, LrStretchError> {
+    compute_beta_lr_stretch_polynomial(outer, inner, content, beta)
+}
+
+/// Evaluate a beta-shifted stretched coefficient using interpolation.
+pub fn beta_lr_stretch_coefficient(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+    stretch: u64,
+) -> Result<BigInt, LrStretchError> {
+    let polynomial = compute_beta_lr_stretch_polynomial(outer, inner, content, beta)?;
+    Ok(evaluate_h_vector(
+        &polynomial.h_vector,
+        polynomial.dimension,
+        stretch,
+    ))
+}
+
 pub fn compute_lr_stretch_polynomial(
     outer: &[i32],
     inner: &[i32],
@@ -68,6 +96,41 @@ pub fn compute_lr_stretch_polynomial(
     };
     let dimension = stretch_cache.dimension();
 
+    interpolate_stretch_polynomial(dimension, |stretch| {
+        scaled_lr_counts(&stretch_cache, stretch)
+    })
+}
+
+pub fn compute_beta_lr_stretch_polynomial(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    beta: &[i32],
+) -> Result<LrStretchPolynomial, LrStretchError> {
+    let Some(stretch_cache) =
+        beta_lrcoef_buch_stretch_cache(outer, inner, content, beta).map_err(map_lrcoef_error)?
+    else {
+        return Ok(LrStretchPolynomial {
+            dimension: 0,
+            coefficients: vec![BigRational::zero()],
+            h_vector: vec![BigInt::zero()],
+            sample_points: Vec::new(),
+        });
+    };
+    let dimension = stretch_cache.dimension();
+
+    interpolate_stretch_polynomial(dimension, |stretch| {
+        scaled_beta_lr_counts(&stretch_cache, stretch)
+    })
+}
+
+fn interpolate_stretch_polynomial<F>(
+    dimension: usize,
+    mut counts_at: F,
+) -> Result<LrStretchPolynomial, LrStretchError>
+where
+    F: FnMut(u64) -> Result<LrBuchCounts, LrStretchError>,
+{
     if dimension == 0 {
         return Ok(LrStretchPolynomial {
             dimension,
@@ -85,7 +148,7 @@ pub fn compute_lr_stretch_polynomial(
     let sign_positive = dimension % 2 == 0;
     let mut stretch = 1u64;
     while points.len() <= dimension {
-        let counts = scaled_lr_counts(&stretch_cache, stretch)?;
+        let counts = counts_at(stretch)?;
         let full = counts
             .full
             .to_bigint()
@@ -152,6 +215,13 @@ fn scaled_lr_counts(
     stretch: u64,
 ) -> Result<LrBuchCounts, LrStretchError> {
     lrcoef_buch_stretched_counts_u128(stretch_cache, stretch).map_err(map_lrcoef_error)
+}
+
+fn scaled_beta_lr_counts(
+    stretch_cache: &BetaLrBuchStretchCache,
+    stretch: u64,
+) -> Result<LrBuchCounts, LrStretchError> {
+    beta_lrcoef_buch_stretched_counts_u128(stretch_cache, stretch).map_err(map_lrcoef_error)
 }
 
 fn compute_h_vector_from_coefficients(
@@ -264,6 +334,7 @@ pub fn format_error(error: LrStretchError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lrcoef::{beta_lrcoef_buch_stretch_cache, beta_lrcoef_buch_stretched_counts_u128};
 
     #[test]
     fn evaluates_h_vector_formula() {
@@ -297,6 +368,52 @@ mod tests {
                     "outer={outer:?} inner={inner:?} content={content:?} stretch={stretch}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn beta_stretch_polynomial_matches_direct_counts() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..], &[][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[2, 1][..], &[2, 0][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[1, 2][..], &[3, 0][..]),
+        ];
+        for (outer, inner, content, beta) in cases {
+            let polynomial =
+                compute_beta_lr_stretch_polynomial(outer, inner, content, beta).unwrap();
+            let stretch_cache = beta_lrcoef_buch_stretch_cache(outer, inner, content, beta)
+                .unwrap()
+                .expect("test cases should have nonzero stretch families");
+            assert_eq!(polynomial.h_vector.len(), polynomial.dimension + 1);
+            for stretch in 1..=4 {
+                let interpolated =
+                    evaluate_h_vector(&polynomial.h_vector, polynomial.dimension, stretch);
+                let direct = beta_lrcoef_buch_stretched_counts_u128(&stretch_cache, stretch)
+                    .unwrap_or_else(|_| panic!("direct count failed at stretch {stretch}"));
+                let direct = direct
+                    .full
+                    .to_bigint()
+                    .expect("u128 should convert to BigInt");
+                assert_eq!(
+                    interpolated, direct,
+                    "outer={outer:?} inner={inner:?} content={content:?} beta={beta:?} stretch={stretch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn beta_stretch_with_empty_beta_specializes_to_lr_stretch() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..]),
+            (&[4, 2][..], &[2, 1][..], &[2, 1][..]),
+        ];
+        for (outer, inner, content) in cases {
+            assert_eq!(
+                compute_beta_lr_stretch_polynomial(outer, inner, content, &[]).unwrap(),
+                compute_lr_stretch_polynomial(outer, inner, content).unwrap(),
+                "outer={outer:?} inner={inner:?} content={content:?}"
+            );
         }
     }
 
