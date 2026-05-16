@@ -1233,12 +1233,11 @@ fn partial_collapse_rows_normalized(outer: &[u32], inner: &[u32]) -> Vec<usize> 
         return Vec::new();
     };
 
-    let mut end = last_defect;
-    if last_defect + 1 < rows && part_u32(inner, last_defect) > part_u32(outer, last_defect + 1) {
-        end += 1;
+    if part_u32(inner, last_defect) >= part_u32(outer, last_defect + 1) {
+        return Vec::new();
     }
 
-    (0..end).collect()
+    (0..last_defect).collect()
 }
 
 fn part_u32(parts: &[u32], index: usize) -> u32 {
@@ -2549,7 +2548,7 @@ mod tests {
         );
         assert_eq!(
             lrcoef_gt_partial_collapse_rows(&[4, 2], &[2, 1]).unwrap(),
-            vec![0]
+            Vec::<usize>::new()
         );
         assert_eq!(
             lrcoef_gt_partial_collapse_rows(&[7, 4, 2, 1], &[4, 2]).unwrap(),
@@ -2557,7 +2556,7 @@ mod tests {
         );
         assert_eq!(
             lrcoef_gt_partial_collapse_rows(&[7, 4, 2, 1], &[4, 3, 1]).unwrap(),
-            vec![0, 1]
+            Vec::<usize>::new()
         );
         assert_eq!(
             lrcoef_gt_partial_collapse_rows(&[7, 6, 5, 4, 3, 2, 1], &[4, 4, 3, 2, 1]).unwrap(),

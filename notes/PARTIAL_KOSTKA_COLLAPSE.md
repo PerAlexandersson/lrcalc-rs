@@ -36,18 +36,18 @@ Observed on 2026-05-16:
 | exact tiny | 3 | 2 | 7 | `-` | 15 | false | gt-fallback | 3 |
 | exact sparse | 4 | 4 | 11 | `-` | 25 | false | gt-fallback | 9 |
 | exact medium x2 | 5 | 106 | 2225 | `-` | 109115 | false | gt-fallback | 1644 |
-| one tail defect | 2 | 1 | 2 | `0` | 1 | true | certified-mask | 2 |
+| one tail defect | 2 | 1 | 2 | `-` | 2 | false | gt-fallback | 1 |
 | left extension defect | 4 | 4 | 8 | `0,1` | 4 | true | certified-mask | 6 |
-| right gap defect | 4 | 2 | 8 | `0,1` | 2 | true | certified-mask | 8 |
+| right gap defect | 4 | 2 | 8 | `-` | 19 | false | gt-fallback | 3 |
 | irregular mixed | 7 | 56 | 84 | `0,1,2,3,4` | 56 | true | certified-mask | 76 |
 
 Small survey through outer size `8`:
 
 - triples: `4136`
-- nonempty candidates: `3298`
-- exact candidates: `3278`
+- nonempty candidates: `2355`
+- exact candidates: `2885`
 - improved exact candidates: `5`
-- certified candidates: `3214`
+- certified candidates: `2835`
 - certified inexact candidates: `0`
 - certified improved candidates: `5`
 
@@ -57,10 +57,11 @@ Exact Kostka translations should keep using the direct packed Kostka dispatch
 from the hybrid path.  The masked DP is not as strong there, and the certificate
 correctly rejects the empty-mask relaxation.
 
-For near-Kostka shapes, the useful pattern is different: low row masks often
-recover the LR coefficient while dropping some prefix coordinates.  A simple
-candidate based on the last diagonal-concatenation defect matches the tested
-near-Kostka examples and is certified on the diagnostic cases above.
+For near-Kostka shapes, the useful pattern is different: low row masks can
+recover the LR coefficient while dropping some prefix coordinates.  The current
+candidate only fires on underfull last defects.  This keeps the useful
+left-extension and irregular cases while avoiding exact-but-slower masks for
+tail/excess gap defects.
 
 ## Next Step
 
@@ -77,3 +78,12 @@ Next:
 1. Benchmark the certified candidate on larger near-Kostka families.
 2. Extend the same idea to paired full/interior counts only after the full-count
    mask behavior is stable.
+
+Current mixed full-count benchmark:
+
+```bash
+timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
+```
+
+The combined selector is about `3.77x` faster than raw GT-chain full counts on
+the exact/near-Kostka benchmark suite.

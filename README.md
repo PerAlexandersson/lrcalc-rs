@@ -55,9 +55,14 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 ```
+
+Current `lr_hybrid_bench -- 5 3` result: the combined full-count hybrid was
+about `3.77x` faster than raw GT-chain full counts on a mixed exact/near-Kostka
+suite.
 
 Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
 `911x` slower than packed Kostka counts on the translated suite, while the

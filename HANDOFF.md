@@ -30,6 +30,8 @@ engines.
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
   stretched Kostka DP and the equivalent stretched LR GT-chain DP.
+- `src/bin/lr_hybrid_bench.rs` compares raw GT full counts with the combined
+  full-count hybrid selector on exact and near-Kostka families.
 - `src/bin/partial_collapse_probe.rs` explores row-masked Yamanouchi DPs for
   partial Kostka collapse candidates.
 
@@ -43,6 +45,10 @@ passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
 `911x` slower than packed Kostka DP on the scaled Kostka-translation suite.
 The hybrid LR path recognized every case as `kostka` mode and ran at about
 `1.01x` the packed Kostka time, with matching full and interior counts.
+
+`timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3`
+passed on 2026-05-16.  The combined full-count hybrid was about `3.77x` faster
+than raw GT-chain full counts on the mixed exact/near-Kostka suite.
 
 ## Main Gaps
 
