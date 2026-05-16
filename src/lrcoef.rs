@@ -209,8 +209,7 @@ pub fn beta_lr_content_expansion(
         }]);
     }
 
-    let mut terms = ContentAccumulator::new(shape.skew_size, shape.label_count);
-    beta_lrcoef_accumulate_content(&shape, &mut terms)?;
+    let terms = beta_lrcoef_content_accumulator(&shape)?;
 
     let mut terms = terms.into_terms();
     terms.sort_by(|left, right| left.content.cmp(&right.content));
@@ -340,42 +339,6 @@ impl ContentAccumulator {
                 }
             }
             Self::VecMap(terms) => add_vec_content(terms, content),
-        }
-    }
-
-    fn add_packed_or_content(
-        &mut self,
-        key: Option<u128>,
-        content_counts: &[i32],
-    ) -> Result<(), LrCoefError> {
-        match self {
-            Self::Packed(packed) => {
-                if let Some(key) = key {
-                    packed.add_key(key)
-                } else {
-                    let content = trimmed_content_slice(content_counts);
-                    let Self::Packed(mut packed) =
-                        std::mem::replace(self, Self::VecMap(HashMap::new()))
-                    else {
-                        unreachable!("matched packed accumulator above");
-                    };
-                    let mut vec_terms = packed.drain_to_vec_map();
-                    add_vec_content(&mut vec_terms, content)?;
-                    *self = Self::VecMap(vec_terms);
-                    Ok(())
-                }
-            }
-            Self::VecMap(terms) => {
-                let content = trimmed_content_slice(content_counts);
-                add_vec_content(terms, content)
-            }
-        }
-    }
-
-    fn packed_state(&self) -> Option<PackedContentState> {
-        match self {
-            Self::Packed(packed) => Some(PackedContentState::new(packed)),
-            Self::VecMap(_) => None,
         }
     }
 
@@ -2092,12 +2055,24 @@ where
     Ok(())
 }
 
-fn beta_lrcoef_accumulate_content(
+fn beta_lrcoef_content_accumulator(
     shape: &BetaSkewShape,
-    terms: &mut ContentAccumulator,
-) -> Result<(), LrCoefError> {
+) -> Result<ContentAccumulator, LrCoefError> {
+    match ContentAccumulator::new(shape.skew_size, shape.label_count) {
+        ContentAccumulator::Packed(packed) => beta_lrcoef_accumulate_content_packed(shape, packed),
+        ContentAccumulator::VecMap(mut terms) => {
+            beta_lrcoef_accumulate_content_vec(shape, &mut terms)?;
+            Ok(ContentAccumulator::VecMap(terms))
+        }
+    }
+}
+
+fn beta_lrcoef_accumulate_content_packed(
+    shape: &BetaSkewShape,
+    packed: PackedContentAccumulator,
+) -> Result<ContentAccumulator, LrCoefError> {
     if shape.skew_size == 0 {
-        return Ok(());
+        return Ok(ContentAccumulator::Packed(packed));
     }
 
     let mut boxes = new_skewtab(
@@ -2108,7 +2083,9 @@ fn beta_lrcoef_accumulate_content(
     )?;
     let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
     let mut content_counts = vec![0i32; shape.label_count + 1];
-    let mut packed_state = terms.packed_state();
+    let mut packed_state = PackedContentState::new(&packed);
+    let mut packed_terms = packed;
+    let mut vec_terms = None::<HashMap<Vec<i32>, u128>>;
 
     let n = shape.skew_size;
     let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
@@ -2133,17 +2110,92 @@ fn beta_lrcoef_accumulate_content(
             x = boxes[pos].value;
             let label = x as usize;
             unplace_content_label(label, &mut total_counts, &mut content_counts);
-            if let Some(state) = &mut packed_state {
-                state.unplace(label);
+            packed_state.unplace(label);
+            x -= 1;
+        } else if pos + 1 < real_boxes {
+            boxes[pos].value = x;
+            let label = x as usize;
+            place_content_label_fast(label, &mut total_counts, &mut content_counts);
+            packed_state.place(label);
+            pos += 1;
+            x = boxes[boxes[pos].east].value;
+            above = boxes[boxes[pos].north].value;
+        } else {
+            boxes[pos].value = x;
+            let label = x as usize;
+            place_content_label_fast(label, &mut total_counts, &mut content_counts);
+            packed_state.place(label);
+            if let Some(key) = packed_state.packed_key() {
+                packed_terms.add_key(key)?;
+            } else {
+                let content = trimmed_content_slice(&content_counts[1..]);
+                let terms = vec_terms.get_or_insert_with(HashMap::new);
+                add_vec_content(terms, content)?;
             }
+            unplace_content_label(label, &mut total_counts, &mut content_counts);
+            packed_state.unplace(label);
+            x -= 1;
+        }
+    }
+
+    if let Some(mut terms) = vec_terms {
+        for (content, coefficient) in packed_terms.drain_to_vec_map() {
+            let entry = terms.entry(content).or_insert(0);
+            *entry = entry
+                .checked_add(coefficient)
+                .ok_or(LrCoefError::ArithmeticOverflow)?;
+        }
+        Ok(ContentAccumulator::VecMap(terms))
+    } else {
+        Ok(ContentAccumulator::Packed(packed_terms))
+    }
+}
+
+fn beta_lrcoef_accumulate_content_vec(
+    shape: &BetaSkewShape,
+    terms: &mut HashMap<Vec<i32>, u128>,
+) -> Result<(), LrCoefError> {
+    if shape.skew_size == 0 {
+        return Ok(());
+    }
+
+    let mut boxes = new_skewtab(
+        &shape.outer,
+        &shape.inner,
+        shape.label_count,
+        shape.skew_size,
+    )?;
+    let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
+    let mut content_counts = vec![0i32; shape.label_count + 1];
+
+    let n = shape.skew_size;
+    let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north].value;
+    let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+
+    loop {
+        while x > boxes[pos].max {
+            x -= 1;
+        }
+        while x > 0 && x > above && !beta_content_label_allowed(x as usize, &total_counts) {
+            x -= 1;
+        }
+
+        if x <= above {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            above = boxes[boxes[pos].north].value;
+            x = boxes[pos].value;
+            let label = x as usize;
+            unplace_content_label(label, &mut total_counts, &mut content_counts);
             x -= 1;
         } else if pos + 1 < real_boxes {
             boxes[pos].value = x;
             let label = x as usize;
             place_content_label(label, &mut total_counts, &mut content_counts)?;
-            if let Some(state) = &mut packed_state {
-                state.place(label);
-            }
             pos += 1;
             x = boxes[boxes[pos].east].value;
             above = boxes[boxes[pos].north].value;
@@ -2151,17 +2203,9 @@ fn beta_lrcoef_accumulate_content(
             boxes[pos].value = x;
             let label = x as usize;
             place_content_label(label, &mut total_counts, &mut content_counts)?;
-            if let Some(state) = &mut packed_state {
-                state.place(label);
-            }
-            let packed_key = packed_state
-                .as_ref()
-                .and_then(PackedContentState::packed_key);
-            terms.add_packed_or_content(packed_key, &content_counts[1..])?;
+            let content = trimmed_content_slice(&content_counts[1..]);
+            add_vec_content(terms, content)?;
             unplace_content_label(label, &mut total_counts, &mut content_counts);
-            if let Some(state) = &mut packed_state {
-                state.unplace(label);
-            }
             x -= 1;
         }
     }
@@ -2193,6 +2237,11 @@ fn place_content_label(
         .checked_add(1)
         .ok_or(LrCoefError::ArithmeticOverflow)?;
     Ok(())
+}
+
+fn place_content_label_fast(label: usize, total_counts: &mut [i32], content_counts: &mut [i32]) {
+    total_counts[label] += 1;
+    content_counts[label] += 1;
 }
 
 fn unplace_content_label(label: usize, total_counts: &mut [i32], content_counts: &mut [i32]) {

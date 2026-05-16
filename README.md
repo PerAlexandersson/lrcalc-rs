@@ -96,7 +96,7 @@ about `180x` faster than an upstream-C repeated Schur multiplication baseline.
 Current optimized skew expansion snapshot: on
 `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both take about
 `0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust takes about
-`1.88s` versus upstream C at about `1.37s`; before the optimizer, packed
+`1.85s` versus upstream C at about `1.37s`; before the optimizer, packed
 accumulator, and incremental packed keys the Rust path took about `7.2s`.
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
