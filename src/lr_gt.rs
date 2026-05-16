@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::kostka_fast::{kostka_counts_stats, KostkaCountsStats, KostkaFastError};
 use crate::lrcoef::{optim_coef, LrCoefError, OptimizedCoef};
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -59,6 +60,18 @@ pub struct LrGtCountsStats {
     pub strict_lower_constraints: usize,
     pub strict_diagonal_constraints: usize,
     pub strict_yamanouchi_constraints: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LrHybridCountsMode {
+    KostkaTranslation,
+    GtChain,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LrHybridCountsStats {
+    pub mode: LrHybridCountsMode,
+    pub counts: LrGtCountsStats,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -223,6 +236,28 @@ pub fn lrcoef_gt_counts_stats(
             lrcoef_gt_counts_stats_compacted(&shape.outer, &shape.inner, &shape.content)
         }
     }
+}
+
+/// Compute full and relative-interior LR counts, using the packed Kostka DP
+/// when the skew LR shape is the row-diagonal translation of a Kostka problem.
+pub fn lrcoef_hybrid_counts_stats(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<LrHybridCountsStats, LrGtError> {
+    if let Some(weight) = kostka_translation_weight(outer, inner) {
+        let counts =
+            kostka_counts_to_lr(kostka_counts_stats(content, &weight).map_err(map_kostka_error)?);
+        return Ok(LrHybridCountsStats {
+            mode: LrHybridCountsMode::KostkaTranslation,
+            counts,
+        });
+    }
+
+    Ok(LrHybridCountsStats {
+        mode: LrHybridCountsMode::GtChain,
+        counts: lrcoef_gt_counts_stats(outer, inner, content)?,
+    })
 }
 
 fn lrcoef_gt_counts_stats_compacted(
@@ -689,6 +724,70 @@ fn map_lrcoef_error(error: LrCoefError) -> LrGtError {
         LrCoefError::InvalidPartition => LrGtError::InvalidInput,
         LrCoefError::ArithmeticOverflow => LrGtError::ArithmeticOverflow,
     }
+}
+
+fn map_kostka_error(error: KostkaFastError) -> LrGtError {
+    match error {
+        KostkaFastError::InvalidInput => LrGtError::InvalidInput,
+        KostkaFastError::ArithmeticOverflow => LrGtError::ArithmeticOverflow,
+        KostkaFastError::StateTooWide => LrGtError::StateTooWide,
+    }
+}
+
+fn kostka_counts_to_lr(stats: KostkaCountsStats) -> LrGtCountsStats {
+    LrGtCountsStats {
+        full: stats.full,
+        interior: stats.interior,
+        full_peak_states: stats.full_peak_states,
+        full_levels: stats.full_levels,
+        interior_peak_states: stats.interior_peak_states,
+        interior_levels: stats.interior_levels,
+        full_reachable_levels: stats.full_reachable_levels,
+        strict_lower_constraints: stats.strict_lower_constraints,
+        strict_diagonal_constraints: stats.strict_diagonal_constraints,
+        strict_yamanouchi_constraints: 0,
+    }
+}
+
+fn kostka_translation_weight(outer: &[i32], inner: &[i32]) -> Option<Vec<i32>> {
+    if !valid_raw_partition(outer) || !valid_raw_partition(inner) {
+        return None;
+    }
+
+    let outer_len = raw_partition_length(outer);
+    if inner.iter().skip(outer_len).any(|&part| part != 0) {
+        return None;
+    }
+
+    let mut weight = Vec::new();
+    for row in 0..outer_len {
+        let inner_row = raw_part(outer, row + 1);
+        if raw_part(inner, row) != inner_row {
+            return None;
+        }
+
+        let width = raw_part(outer, row).checked_sub(inner_row)?;
+        if width > 0 {
+            weight.push(width);
+        }
+    }
+
+    Some(weight)
+}
+
+fn valid_raw_partition(parts: &[i32]) -> bool {
+    parts.iter().all(|&part| part >= 0) && parts.windows(2).all(|w| w[0] >= w[1])
+}
+
+fn raw_partition_length(parts: &[i32]) -> usize {
+    parts
+        .iter()
+        .rposition(|&part| part != 0)
+        .map_or(0, |index| index + 1)
+}
+
+fn raw_part(parts: &[i32], index: usize) -> i32 {
+    parts.get(index).copied().unwrap_or(0)
 }
 
 fn reachable_levels(
@@ -1627,6 +1726,8 @@ fn one_counts_stats() -> LrGtCountsStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kostka::kostka_lr_triple;
+    use crate::kostka_fast::kostka_counts_stats;
     use crate::lrcoef::lrcoef;
 
     #[test]
@@ -1716,6 +1817,68 @@ mod tests {
                 counts.interior,
                 lrcoef_gt_interior_u128(outer, inner, content).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn hybrid_uses_kostka_translation_when_shape_matches() {
+        let shape = [5, 4, 2, 1];
+        let weight = [4, 3, 2, 2, 1];
+        let (outer, inner, content) = kostka_lr_triple(&shape, &weight).unwrap();
+
+        let kostka = kostka_counts_stats(&shape, &weight).unwrap();
+        let hybrid = lrcoef_hybrid_counts_stats(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrHybridCountsMode::KostkaTranslation);
+        assert_eq!(hybrid.counts.full, kostka.full);
+        assert_eq!(hybrid.counts.interior, kostka.interior);
+        assert_eq!(hybrid.counts.full_peak_states, kostka.full_peak_states);
+        assert_eq!(
+            hybrid.counts.interior_peak_states,
+            kostka.interior_peak_states
+        );
+    }
+
+    #[test]
+    fn hybrid_falls_back_for_general_lr_shape() {
+        let outer = [4, 2];
+        let inner = [2, 1];
+        let content = [2, 1];
+
+        let hybrid = lrcoef_hybrid_counts_stats(&outer, &inner, &content).unwrap();
+        let gt = lrcoef_gt_counts_stats(&outer, &inner, &content).unwrap();
+
+        assert_eq!(hybrid.mode, LrHybridCountsMode::GtChain);
+        assert_eq!(hybrid.counts, gt);
+    }
+
+    #[test]
+    fn hybrid_matches_gt_counts_for_all_small_triples() {
+        for outer_size in 0..=6 {
+            for outer in partitions_of(outer_size) {
+                for inner_size in 0..=outer_size {
+                    for inner in partitions_of(inner_size) {
+                        if !partition_less_equal_i32(&inner, &outer) {
+                            continue;
+                        }
+                        let content_size = outer_size - inner_size;
+                        for content in partitions_of(content_size) {
+                            let hybrid = lrcoef_hybrid_counts_stats(&outer, &inner, &content)
+                                .unwrap()
+                                .counts;
+                            let gt = lrcoef_gt_counts_stats(&outer, &inner, &content).unwrap();
+                            assert_eq!(
+                                hybrid.full, gt.full,
+                                "full mismatch: outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                            assert_eq!(
+                                hybrid.interior, gt.interior,
+                                "interior mismatch: outer={outer:?} inner={inner:?} content={content:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 

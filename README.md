@@ -17,6 +17,8 @@ upstream C.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - GT-chain LR counter, including relative-interior and dimension variants.
+- Hybrid LR count stats that dispatch Kostka-translation skew shapes to the
+  packed Kostka DP and otherwise use the GT-chain LR DP.
 - Signed Kostka expansion for LR coefficients.
 - Fast ordinary and skew Kostka dynamic programs.
 - Ehrhart h-vector interpolation for pure stretched LR coefficients.
@@ -52,6 +54,11 @@ timeout 60s nice -n 10 cargo run -- kostka-fast 3 2 1 - 2 2 2
 timeout 60s nice -n 10 cargo run -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 ```
+
+Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
+`924x` slower than packed Kostka counts on the translated suite, while the
+hybrid LR path is about `1.05x` the Kostka time and keeps matching full and
+interior counts.
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
 binary via `UPSTREAM_BIN`; see each script's help text before running.

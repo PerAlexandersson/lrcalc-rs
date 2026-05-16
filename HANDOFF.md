@@ -16,7 +16,9 @@ engines.
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.
 - `src/lr_gt.rs` contains an independent GT-chain LR DP with stats, dimension,
-  and relative-interior variants.
+  and relative-interior variants.  It also has a hybrid full/interior count
+  path that recognizes row-diagonal Kostka translations and dispatches them to
+  the packed Kostka DP.
 - `src/kostka_fast.rs` contains packed `u128` ordinary/skew Kostka DP and
   interior counts.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
@@ -30,13 +32,14 @@ engines.
 
 ## Verified
 
-`timeout 60s nice -n 10 cargo test` passed on 2026-05-15:
-40 library tests, all benchmark-bin test targets, and doc-tests.
+`timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
+43 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3`
-passed on 2026-05-15.  The first run showed the equivalent LR GT-chain DP is
-about `910x` slower than packed Kostka DP on the scaled Kostka-translation
-suite, with matching full and interior counts.
+passed on 2026-05-16.  The run showed the equivalent LR GT-chain DP is about
+`924x` slower than packed Kostka DP on the scaled Kostka-translation suite.
+The hybrid LR path recognized every case as `kostka` mode and ran at about
+`1.05x` the packed Kostka time, with matching full and interior counts.
 
 ## Main Gaps
 
@@ -60,8 +63,8 @@ suite, with matching full and interior counts.
   against a freshly built upstream C binary.
 - Profile the Buch-port, GT-chain, and signed-Kostka paths on the same corpus
   before adding new optimizations.
-- Use `stretched_dp_bench` results to decide whether to detect
-  Kostka-translation LR triples and dispatch them to the packed Kostka DP.
+- Extend the hybrid LR fast paths beyond exact row-diagonal Kostka
+  translations, guided by state-count gaps in `stretched_dp_bench`.
 
 ## Notes
 
