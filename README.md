@@ -12,6 +12,28 @@ several independent LR/Kostka counting engines, Ehrhart interpolation
 experiments for stretched LR coefficients, and benchmark harnesses against
 upstream C.
 
+## Upstream, Credits, and Ecosystem
+
+`lrcalc-rs` is a compatibility-oriented Rust implementation of the classic
+[Littlewood-Richardson Calculator](https://sites.math.rutgers.edu/~asbuch/lrcalc/)
+by Anders S. Buch.  The upstream source repository is
+[asbuch/lrcalc on Bitbucket](https://bitbucket.org/asbuch/lrcalc/src/master/).
+
+The upstream project and ecosystem deserve explicit credit.  The original
+`lrcalc` package is by Anders S. Buch; its upstream page also credits
+Nicolas M. Thiery and Jean-Pierre Flori for the GNU automake system, and
+Pierre-Emmanuel Chaput for suggestions that led to a large speedup in single
+LR coefficient computation.  Sage's `lrcalc` interface credits Mike Hansen for
+the core interface, and Anne Schilling, Nicolas M. Thiery, and Anders Buch for
+fusion products, LR-tableau iteration, finalization, and documentation.
+
+Classic `lrcalc` is used by several downstream systems and package ecosystems:
+
+- [SageMath package `lrcalc`](https://doc.sagemath.org/html/en/reference/spkg/lrcalc.html)
+- [SageMath `sage.libs.lrcalc` interface](https://doc.sagemath.org/html/en/reference/libs/sage/libs/lrcalc/lrcalc.html)
+- [Python bindings on PyPI](https://pypi.org/project/lrcalc/)
+- [Repology package overview](https://repology.org/project/lrcalc/versions)
+
 ## Mathematical Background
 
 For background on the main objects computed by this project, see SymCat:
