@@ -3382,6 +3382,41 @@ mod tests {
     }
 
     #[test]
+    fn beta_content_expansion_matches_scalar_beta_counts_for_small_cases() {
+        let cases = [
+            (&[3, 2][..], &[1][..], &[1][..], 4usize),
+            (&[4, 2, 1][..], &[2, 1][..], &[2, 1][..], 5usize),
+        ];
+
+        for (outer, inner, beta, max_labels) in cases {
+            let skew_size = part_sum(outer).unwrap() - part_sum(inner).unwrap();
+            let mut actual = beta_lr_content_expansion(outer, inner, beta, Some(max_labels))
+                .unwrap()
+                .into_iter()
+                .map(|term| (term.content, term.coefficient))
+                .collect::<std::collections::BTreeMap<_, _>>();
+
+            for content in compositions_of_fixed_length(skew_size, max_labels) {
+                let trimmed = trim_content_counts(&content);
+                let expected = beta_lrcoef(outer, inner, &trimmed, beta).unwrap();
+                if expected == 0 {
+                    assert!(
+                        !actual.contains_key(&trimmed),
+                        "unexpected outer={outer:?} inner={inner:?} beta={beta:?} content={trimmed:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        actual.remove(&trimmed),
+                        Some(expected),
+                        "outer={outer:?} inner={inner:?} beta={beta:?} content={trimmed:?}"
+                    );
+                }
+            }
+            assert!(actual.is_empty(), "unmatched terms: {actual:?}");
+        }
+    }
+
+    #[test]
     fn beta_counts_report_full_and_interior() {
         let outer = [6, 4, 2];
         let inner = [3, 2, 1];
