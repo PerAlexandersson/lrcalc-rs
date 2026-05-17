@@ -3,12 +3,27 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM_LIB="${UPSTREAM_LIB:-/tmp/lrcalc-upstream/src/.libs/liblrcalc.so}"
+UPSTREAM_BIN="${UPSTREAM_BIN:-/tmp/lrcalc-upstream/src/lrcalc}"
 OUTPUT="${1:-notes/LRCOEF_BENCHMARK_REPORT.md}"
 
 if [[ ! -f "$UPSTREAM_LIB" ]]; then
   cat >&2 <<EOF
 upstream shared library not found:
   $UPSTREAM_LIB
+
+Build it first:
+  cd /tmp/lrcalc-upstream
+  autoreconf -i
+  ./configure --enable-shared --disable-static
+  make -j2
+EOF
+  exit 2
+fi
+
+if [[ ! -x "$UPSTREAM_BIN" ]]; then
+  cat >&2 <<EOF
+upstream executable not found:
+  $UPSTREAM_BIN
 
 Build it first:
   cd /tmp/lrcalc-upstream
@@ -44,6 +59,7 @@ emit_report() {
   echo "- Kostka template: \`timeout 60s nice -n 10 cargo run --release --bin kostka_bench -- --markdown <repeat>\`"
   echo "- Stretched Kostka-as-LR template: \`timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- --markdown <repeat> <max-scale>\`"
   echo "- Stretched LR template: \`timeout 60s nice -n 10 cargo run --release --bin lr_hstar_bench -- --markdown <repeat> <stretch>\`"
+  echo "- Hard stretched LR template: \`timeout 60s nice -n 10 cargo run --release --bin lr_hstar_hard_bench -- --markdown <repeat> <timeout-secs>\`"
   echo
   echo "The LR FFI suites check Rust results against upstream C before timing. Ratios"
   echo "there are \`Rust/C\`, so values below \`1.000x\` mean the Rust ABI path is"
@@ -73,6 +89,8 @@ emit_report() {
   run_stretched_dp_suite 5 3
   echo
   run_lr_hstar_suite 3 5
+  echo
+  run_lr_hstar_hard_suite 1000 5
 }
 
 run_suite() {
@@ -101,6 +119,14 @@ run_lr_hstar_suite() {
   local stretch="$2"
   timeout 60s nice -n 10 cargo run --release --bin lr_hstar_bench -- \
     --markdown "$repeat" "$stretch"
+}
+
+run_lr_hstar_hard_suite() {
+  local repeat="$1"
+  local timeout_secs="$2"
+  UPSTREAM_BIN="$UPSTREAM_BIN" \
+    timeout 60s nice -n 10 cargo run --release --bin lr_hstar_hard_bench -- \
+      --markdown "$repeat" "$timeout_secs"
 }
 
 if [[ "$OUTPUT" == "-" ]]; then
