@@ -88,6 +88,32 @@ pub fn schur_skew_expansion(
     Ok(terms)
 }
 
+pub fn schur_coproduct_expansion(
+    shape: &[i32],
+    rows: i32,
+    cols: i32,
+    all: bool,
+) -> Result<Vec<SchurTerm>, SchurExpansionError> {
+    validate_partition(shape)?;
+    if rows < 0 || cols < 0 {
+        return Err(SchurExpansionError::InvalidPartition);
+    }
+    let rows = usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+    let shape = trim_trailing_zeroes(shape);
+    let rectangle = vec![cols; rows];
+    let mut terms = schur_product_expansion(&shape, &rectangle, -1, -1)?;
+    if !all {
+        let mut filtered = Vec::with_capacity(terms.len());
+        for term in terms {
+            if !coproduct_is_redundant(&term.partition, rows, cols)? {
+                filtered.push(term);
+            }
+        }
+        terms = filtered;
+    }
+    Ok(terms)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OptimizedSkewShape {
     outer: Vec<i32>,
@@ -156,6 +182,46 @@ fn disconnected_product_skew_shape(
     outer.extend_from_slice(bottom);
 
     Ok((trim_trailing_zeroes(&outer), trim_trailing_zeroes(&inner)))
+}
+
+fn coproduct_is_redundant(
+    partition: &[i32],
+    rows: usize,
+    cols: i32,
+) -> Result<bool, SchurExpansionError> {
+    let rows_i64 = i64::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+    let cols_i64 = i64::from(cols);
+    let mut left_size = rows_i64
+        .checked_mul(cols_i64)
+        .and_then(|value| value.checked_neg())
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    for row in 0..rows {
+        left_size = left_size
+            .checked_add(i64::from(part_entry_i32(partition, row)))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    }
+
+    let mut right_size = 0i64;
+    for &part in partition.iter().skip(rows) {
+        right_size = right_size
+            .checked_add(i64::from(part))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    }
+
+    if left_size != right_size {
+        return Ok(left_size < right_size);
+    }
+
+    for row in 0..rows {
+        let diff = i64::from(part_entry_i32(partition, row))
+            .checked_sub(cols_i64)
+            .and_then(|value| value.checked_sub(i64::from(part_entry_i32(partition, rows + row))))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        if diff != 0 {
+            return Ok(diff > 0);
+        }
+    }
+    Ok(false)
 }
 
 fn contains_partition(outer: &[i32], inner: &[i32]) -> bool {
@@ -554,6 +620,29 @@ mod tests {
         Ok(terms)
     }
 
+    fn reference_coproduct_expansion(
+        shape: &[i32],
+        rows: i32,
+        cols: i32,
+        all: bool,
+    ) -> Result<Vec<(Vec<i32>, u128)>, SchurExpansionError> {
+        let rows_usize =
+            usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+        let rectangle = vec![cols; rows_usize];
+        let mut terms = scalar_product_expansion(shape, &rectangle, -1, -1)?;
+        if !all {
+            let mut filtered = Vec::new();
+            for (partition, coefficient) in terms {
+                if !coproduct_is_redundant(&partition, rows_usize, cols)? {
+                    filtered.push((partition, coefficient));
+                }
+            }
+            terms = filtered;
+        }
+        terms.sort();
+        Ok(terms)
+    }
+
     #[test]
     fn product_of_single_boxes() {
         let terms = schur_product_expansion(&[1], &[1], -1, -1).unwrap();
@@ -656,6 +745,36 @@ mod tests {
                                     "sh1={sh1:?} sh2={sh2:?} rows={rows} cols={cols}"
                                 );
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn coproduct_filters_redundant_terms() {
+        let reduced = schur_coproduct_expansion(&[1], 1, 1, false).unwrap();
+        assert_eq!(term_map(reduced), vec![(vec![2], 1)]);
+
+        let all = schur_coproduct_expansion(&[1], 1, 1, true).unwrap();
+        assert_eq!(term_map(all), vec![(vec![2], 1), (vec![1, 1], 1)]);
+    }
+
+    #[test]
+    fn coproduct_matches_reference_for_small_shapes() {
+        for size in 0..=6 {
+            for shape in partitions_of(size) {
+                for rows in 0..=4 {
+                    for cols in 0..=4 {
+                        for all in [false, true] {
+                            assert_eq!(
+                                sorted_term_map(
+                                    schur_coproduct_expansion(&shape, rows, cols, all).unwrap()
+                                ),
+                                reference_coproduct_expansion(&shape, rows, cols, all).unwrap(),
+                                "shape={shape:?} rows={rows} cols={cols} all={all}"
+                            );
                         }
                     }
                 }

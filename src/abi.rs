@@ -1,7 +1,9 @@
 //! C ABI types and functions matching the original `lrcalc` headers.
 
 use crate::lrcoef::lrcoef_i64;
-use crate::schur::{schur_product_expansion, schur_skew_expansion, SchurTerm};
+use crate::schur::{
+    schur_coproduct_expansion, schur_product_expansion, schur_skew_expansion, SchurTerm,
+};
 use libc::{c_int, c_longlong, c_void};
 use std::mem;
 use std::ptr;
@@ -210,6 +212,17 @@ fn default_skew_key_len(outer: &[i32], inner: &[i32], rows: c_int, partsz: c_int
         let outer_sum: i64 = outer.iter().map(|&part| i64::from(part)).sum();
         let inner_sum: i64 = inner.iter().map(|&part| i64::from(part)).sum();
         usize::try_from(outer_sum.saturating_sub(inner_sum).max(0)).unwrap_or(0)
+    }
+}
+
+fn default_coproduct_key_len(sh: &[i32], rows: c_int, partsz: c_int) -> usize {
+    if partsz >= 0 {
+        partsz as usize
+    } else if rows >= 0 {
+        let len = sh.iter().rposition(|&part| part != 0).map_or(0, |i| i + 1);
+        (rows as usize).saturating_add(len)
+    } else {
+        sh.iter().map(|&part| i64::from(part)).sum::<i64>().max(0) as usize
     }
 }
 
@@ -924,6 +937,29 @@ pub unsafe extern "C" fn schur_skew(
     unsafe { ivlc_from_terms(&terms, key_len) }
 }
 
+/// # Safety
+///
+/// `sh` must point to a valid `IVector` allocation.
+#[no_mangle]
+pub unsafe extern "C" fn schur_coprod(
+    sh: *const IVector,
+    rows: c_int,
+    cols: c_int,
+    partsz: c_int,
+    all: c_int,
+) -> *mut IvLinComb {
+    if sh.is_null() {
+        return ptr::null_mut();
+    }
+    let sh_values = unsafe { ivector_values(sh) };
+    let terms = match schur_coproduct_expansion(sh_values, rows, cols, all != 0) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    let key_len = default_coproduct_key_len(sh_values, rows, partsz);
+    unsafe { ivlc_from_terms(&terms, key_len) }
+}
+
 #[no_mangle]
 pub extern "C" fn lrcalc_new_abi_version() -> u32 {
     0
@@ -1204,6 +1240,45 @@ mod tests {
             ivlc_free_all(lc);
             iv_free(inner);
             iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn schur_coprod_returns_linear_combination() {
+        unsafe {
+            let sh = vector_from_values(&[1]);
+            let lc = schur_coprod(sh, 1, 1, -1, 0);
+            assert!(!lc.is_null());
+            assert_eq!(collect_lc_trimmed(lc), vec![(vec![2], 1)]);
+
+            ivlc_free_all(lc);
+            iv_free(sh);
+        }
+    }
+
+    #[test]
+    fn schur_coprod_all_keeps_redundant_terms() {
+        unsafe {
+            let sh = vector_from_values(&[1]);
+            let lc = schur_coprod(sh, 1, 1, -1, 1);
+            assert!(!lc.is_null());
+            assert_eq!(collect_lc_trimmed(lc), vec![(vec![1, 1], 1), (vec![2], 1)]);
+
+            ivlc_free_all(lc);
+            iv_free(sh);
+        }
+    }
+
+    #[test]
+    fn schur_coprod_honors_part_size_padding() {
+        unsafe {
+            let sh = vector_from_values(&[1]);
+            let lc = schur_coprod(sh, 1, 1, 4, 0);
+            assert!(!lc.is_null());
+            assert_eq!(collect_lc_lengths(lc), vec![(vec![2], 4, 1)]);
+
+            ivlc_free_all(lc);
+            iv_free(sh);
         }
     }
 }

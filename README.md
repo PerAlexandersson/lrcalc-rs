@@ -14,9 +14,10 @@ upstream C.
 - C-facing `ivector` allocation/copy/hash/sum functions.
 - C-facing `ivlincomb` allocation, insertion, lookup, iteration, and
   ownership cleanup functions.
-- C ABI exports for `schur_lrcoef`, `schur_mult`, and `schur_skew`.
-- `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, and `lrcalc skew` CLI
-  commands.
+- C ABI exports for `schur_lrcoef`, `schur_mult`, `schur_skew`, and
+  `schur_coprod`.
+- `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`, and
+  `lrcalc coprod` CLI commands.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
@@ -25,8 +26,8 @@ upstream C.
   `beta=[]` and by skew Kostka weight expansion with dominant finite `beta`.
 - Upstream-style skew-shape optimization for skew Schur expansion, folding
   forced components into the beta prefix before the shared content expansion.
-- Schur product expansion via the same shared skew Schur backend, using a
-  disconnected skew shape and final row/column filtering.
+- Schur product and coproduct expansion via the same shared skew Schur backend,
+  using disconnected skew shapes and upstream-style coproduct filtering.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -41,7 +42,7 @@ upstream C.
 
 ## Not Yet Implemented
 
-- Schur coproduct, fusion, and quantum product ABI functions.
+- Fusion and quantum product ABI functions.
 - LR tableau iterator ABI.
 - Schubert polynomial ABI and `schubmult` compatibility.
 - Installed compatibility headers.

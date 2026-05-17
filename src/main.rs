@@ -22,7 +22,8 @@ use lrcalc::lrcoef::{
     LrBuchInteriorStats, LrCoefError,
 };
 use lrcalc::schur::{
-    schur_product_expansion, schur_skew_expansion, SchurExpansionError, SchurTerm,
+    schur_coproduct_expansion, schur_product_expansion, schur_skew_expansion, SchurExpansionError,
+    SchurTerm,
 };
 
 fn main() {
@@ -66,6 +67,20 @@ fn main() {
                     .map_err(format_schur_error)
             }) {
                 Ok((terms, maple)) => print_schur_terms(&terms, maple),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("coprod") => {
+            let rest: Vec<String> = args.collect();
+            match parse_coprod_args(&rest).and_then(|parsed| {
+                schur_coproduct_expansion(&parsed.shape, parsed.rows, parsed.cols, parsed.all)
+                    .map(|terms| (terms, parsed.rows, parsed.cols))
+                    .map_err(format_schur_error)
+            }) {
+                Ok((terms, rows, cols)) => print_coproduct_terms(&terms, rows, cols),
                 Err(message) => {
                     eprintln!("{program}: {message}");
                     std::process::exit(2);
@@ -756,6 +771,13 @@ struct SkewArgs {
     maple: bool,
 }
 
+struct CoprodArgs {
+    shape: Vec<i32>,
+    rows: i32,
+    cols: i32,
+    all: bool,
+}
+
 fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
     let mut rows = -1;
     let mut cols = -1;
@@ -841,6 +863,34 @@ fn parse_skew_args(args: &[String]) -> Result<SkewArgs, String> {
         inner,
         rows,
         maple,
+    })
+}
+
+fn parse_coprod_args(args: &[String]) -> Result<CoprodArgs, String> {
+    let mut all = false;
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-a" => {
+                all = true;
+                index += 1;
+            }
+            token => {
+                parts.push(token.to_string());
+                index += 1;
+            }
+        }
+    }
+    let shape = parse_partition_args(&parts, "usage: coprod [-a] PART")?;
+    let rows = i32::try_from(partition_length(&shape))
+        .map_err(|_| "partition length overflow".to_string())?;
+    let cols = shape.first().copied().unwrap_or(0);
+    Ok(CoprodArgs {
+        shape,
+        rows,
+        cols,
+        all,
     })
 }
 
@@ -940,6 +990,26 @@ fn parse_partition_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {
     parse_partition_pair_with_separator(args, "-", "usage: kostka-lr SHAPE - WEIGHT")
 }
 
+fn parse_partition_args(args: &[String], usage: &str) -> Result<Vec<i32>, String> {
+    if args.is_empty() {
+        return Err(usage.to_string());
+    }
+    let mut part = Vec::new();
+    for token in args {
+        for piece in token.split(',') {
+            let piece = piece.trim_matches(|ch| matches!(ch, '(' | ')' | '[' | ']'));
+            if piece.is_empty() {
+                continue;
+            }
+            let value = piece
+                .parse::<i32>()
+                .map_err(|_| format!("invalid integer '{piece}'"))?;
+            part.push(value);
+        }
+    }
+    Ok(part)
+}
+
 fn parse_partition_pair_with_separator(
     args: &[String],
     separator: &str,
@@ -987,6 +1057,13 @@ fn format_partition(partition: &[i32]) -> String {
         .join(" ")
 }
 
+fn partition_length(partition: &[i32]) -> usize {
+    partition
+        .iter()
+        .rposition(|&part| part != 0)
+        .map_or(0, |index| index + 1)
+}
+
 fn print_schur_terms(terms: &[SchurTerm], maple: bool) {
     if maple {
         print!("0");
@@ -1008,6 +1085,39 @@ fn print_schur_terms(terms: &[SchurTerm], maple: bool) {
             format_comma_partition(&term.partition)
         );
     }
+}
+
+fn print_coproduct_terms(terms: &[SchurTerm], rows: i32, cols: i32) {
+    let rows = usize::try_from(rows).unwrap_or(0);
+    for term in terms {
+        let (left, right) = coproduct_pair(&term.partition, rows, cols);
+        println!(
+            "{}  ({})  ({})",
+            term.coefficient,
+            format_comma_partition(&left),
+            format_comma_partition(&right)
+        );
+    }
+}
+
+fn coproduct_pair(partition: &[i32], rows: usize, cols: i32) -> (Vec<i32>, Vec<i32>) {
+    let mut left = Vec::new();
+    for row in 0..rows {
+        let part = partition.get(row).copied().unwrap_or(0);
+        if part <= cols {
+            break;
+        }
+        left.push(part - cols);
+    }
+
+    let mut right = Vec::new();
+    for &part in partition.iter().skip(rows) {
+        if part == 0 {
+            break;
+        }
+        right.push(part);
+    }
+    (left, right)
 }
 
 fn format_comma_partition(partition: &[i32]) -> String {

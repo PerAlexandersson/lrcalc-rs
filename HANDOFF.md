@@ -12,14 +12,16 @@ engines.
   `lrcalc` binary.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
-  It also exports `schur_lrcoef`, `schur_mult`, and `schur_skew`.
+  It also exports `schur_lrcoef`, `schur_mult`, `schur_skew`, and
+  `schur_coprod`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
-  looping over scalar LR coefficients.  Skew expansion first applies an
-  upstream-style `optim_skew` shape reduction, folds forced components into a
-  beta prefix, and then uses the variable-content beta tableau enumerator so
-  all residual contents are accumulated in one search.
+  looping over scalar LR coefficients.  Coproduct expands against the
+  containing rectangle and applies Buch's redundancy filter.  Skew expansion
+  first applies an upstream-style `optim_skew` shape reduction, folds forced
+  components into a beta prefix, and then uses the variable-content beta
+  tableau enumerator so all residual contents are accumulated in one search.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -36,8 +38,8 @@ engines.
 - `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families
   and beta-prefix stretched families.
 - CLI commands expose the coefficient engines, beta-prefix LR counts,
-  diagnostic/stat modes, and ordinary upstream-style `mult` and `skew`.
-  `coprod`, fusion/quantum, `tab`, and `schubmult` are still missing.
+  diagnostic/stat modes, and ordinary upstream-style `mult`, `skew`, and
+  `coprod`.  Fusion/quantum, `tab`, and `schubmult` are still missing.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -114,8 +116,8 @@ product loop, and `mult 12 9 6 3 - 12 9 6 3` ran about `2.60x` faster.
   matches upstream more closely, but dense cases still trail upstream C because
   the Rust path lacks the exact tight `lrit_next`-style iterator and packed
   output accumulator.
-- Implement C ABI functions for Schur coproduct, fusion/quantum, LR tableau
-  iteration, and Schubert products.
+- Implement C ABI functions for fusion/quantum, LR tableau iteration, and
+  Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.
@@ -124,7 +126,8 @@ product loop, and `mult 12 9 6 3 - 12 9 6 3` ran about `2.60x` faster.
 
 ## Next Useful Work
 
-- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, and `schur_skew`.
+- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, `schur_skew`, and
+  `schur_coprod`.
 - Add an output-order decision for the CLI: either document unordered output or
   mimic upstream hash iteration more closely.
 - Add an `nm`-based exported-symbol check for P0/P1 ABI coverage.
