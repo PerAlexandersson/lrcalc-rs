@@ -99,21 +99,84 @@ struct Case {
     c_content: OwnedCVector,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OutputFormat {
+    Plain,
+    Markdown,
+}
+
+struct BenchOptions {
+    repeat: usize,
+    suite: String,
+    format: OutputFormat,
+}
+
+struct BenchResult {
+    suite: String,
+    repeat: usize,
+    upstream_path: String,
+    rust_time: Duration,
+    c_time: Duration,
+    diagnostics: Vec<CaseDiagnostic>,
+}
+
+struct CaseDiagnostic {
+    label: &'static str,
+    value: i64,
+    skew_size: i32,
+    labels: usize,
+    rust_time: Duration,
+    c_time: Duration,
+}
+
 fn main() {
-    let mut repeat = 5_000usize;
-    let mut suite = "mixed".to_string();
-    for arg in std::env::args().skip(1) {
-        if let Ok(value) = arg.parse::<usize>() {
-            repeat = value;
-        } else {
-            suite = arg;
-        }
-    }
+    let options = parse_options();
 
     let upstream = Upstream::load();
-    let cases = build_cases(&upstream, &suite);
+    let cases = build_cases(&upstream, &options.suite);
+    let result = run_benchmark(options.repeat, &options.suite, &cases, &upstream);
 
-    for case in &cases {
+    match options.format {
+        OutputFormat::Plain => print_plain_result(&result),
+        OutputFormat::Markdown => print_markdown_result(&result),
+    }
+}
+
+fn parse_options() -> BenchOptions {
+    let mut repeat = 5_000usize;
+    let mut suite = "mixed".to_string();
+    let mut format = OutputFormat::Plain;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--markdown" | "-m" => format = OutputFormat::Markdown,
+            "--plain" => format = OutputFormat::Plain,
+            "--help" | "-h" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            _ => {
+                if let Ok(value) = arg.parse::<usize>() {
+                    repeat = value;
+                } else {
+                    suite = arg;
+                }
+            }
+        }
+    }
+    BenchOptions {
+        repeat,
+        suite,
+        format,
+    }
+}
+
+fn print_usage() {
+    println!("usage: lrcoef_ffi_bench [--markdown] [repeat] [suite]");
+    println!("suites: small, mixed, large-few-parts, large-three-part");
+}
+
+fn run_benchmark(repeat: usize, suite: &str, cases: &[Case], upstream: &Upstream) -> BenchResult {
+    for case in cases {
         let rust_value = rust_lrcoef(case);
         let c_value = c_lrcoef(&upstream, case);
         if rust_value != c_value {
@@ -127,35 +190,92 @@ fn main() {
         }
     }
 
-    println!("suite: lrcoef_ffi_bench");
-    println!("case-suite: {suite}");
-    println!("repeat: {repeat}");
-    println!(
-        "upstream: {}",
-        std::env::var("UPSTREAM_LIB")
-            .unwrap_or_else(|_| "/tmp/lrcalc-upstream/src/.libs/liblrcalc.so".to_string())
-    );
-
-    let (rust_time, rust_sink) = time_loop(repeat, &cases, rust_lrcoef);
-    let (c_time, c_sink) = time_loop(repeat, &cases, |case| c_lrcoef(&upstream, case));
+    let (rust_time, rust_sink) = time_loop(repeat, cases, rust_lrcoef);
+    let (c_time, c_sink) = time_loop(repeat, cases, |case| c_lrcoef(upstream, case));
     black_box((rust_sink, c_sink));
 
-    println!("correctness: ok ({} cases)", cases.len());
+    let diagnostics = case_diagnostics(repeat, cases, upstream);
+    BenchResult {
+        suite: suite.to_string(),
+        repeat,
+        upstream_path: std::env::var("UPSTREAM_LIB")
+            .unwrap_or_else(|_| "/tmp/lrcalc-upstream/src/.libs/liblrcalc.so".to_string()),
+        rust_time,
+        c_time,
+        diagnostics,
+    }
+}
+
+fn print_plain_result(result: &BenchResult) {
+    println!("suite: lrcoef_ffi_bench");
+    println!("case-suite: {}", result.suite);
+    println!("repeat: {}", result.repeat);
+    println!("upstream: {}", result.upstream_path);
+    println!("correctness: ok ({} cases)", result.diagnostics.len());
     println!(
         "Rust lrcoef_i64: {}  ({} evals)",
-        format_duration(rust_time),
-        repeat * cases.len()
+        format_duration(result.rust_time),
+        result.evals()
     );
     println!(
         "C schur_lrcoef: {}  ({} evals)",
-        format_duration(c_time),
-        repeat * cases.len()
+        format_duration(result.c_time),
+        result.evals()
     );
+    println!("ratio Rust/C: {:.3}x", result.ratio());
+    print_plain_case_diagnostics(result);
+}
+
+fn print_markdown_result(result: &BenchResult) {
+    println!("## `lrcoef_ffi_bench`: `{}`", markdown_cell(&result.suite));
+    println!();
+    println!("| Field | Value |");
+    println!("|---|---:|");
+    println!("| Repeat | `{}` |", result.repeat);
+    println!("| Cases | `{}` |", result.diagnostics.len());
+    println!("| Total evaluations | `{}` |", result.evals());
     println!(
-        "ratio Rust/C: {:.3}x",
-        rust_time.as_secs_f64() / c_time.as_secs_f64()
+        "| Upstream library | `{}` |",
+        markdown_cell(&result.upstream_path)
     );
-    print_case_diagnostics(repeat, &cases, &upstream);
+    println!("| Correctness | `ok` |");
+    println!();
+    println!("| Metric | Rust `lrcoef_i64` | Upstream C `schur_lrcoef` | Rust/C |");
+    println!("|---|---:|---:|---:|");
+    println!(
+        "| Total wall time | `{}` | `{}` | `{:.3}x` |",
+        format_duration(result.rust_time),
+        format_duration(result.c_time),
+        result.ratio()
+    );
+    println!();
+    println!("| Per-case statistic | Value |");
+    println!("|---|---:|");
+    println!(
+        "| Rust faster cases | `{}/{}` |",
+        result.rust_faster_cases(),
+        result.diagnostics.len()
+    );
+    println!("| Median Rust/C | `{:.3}x` |", result.median_ratio());
+    println!(
+        "| Geometric mean Rust/C | `{:.3}x` |",
+        result.geometric_mean_ratio()
+    );
+    println!();
+    println!("| Case | Value | Skew size | Labels | Rust | Upstream C | Rust/C |");
+    println!("|---|---:|---:|---:|---:|---:|---:|");
+    for diagnostic in &result.diagnostics {
+        println!(
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{:.3}x` |",
+            markdown_cell(diagnostic.label),
+            diagnostic.value,
+            diagnostic.skew_size,
+            diagnostic.labels,
+            format_duration(diagnostic.rust_time),
+            format_duration(diagnostic.c_time),
+            diagnostic.ratio()
+        );
+    }
 }
 
 fn rust_lrcoef(case: &Case) -> i64 {
@@ -203,12 +323,28 @@ where
     (start.elapsed(), sink)
 }
 
-fn print_case_diagnostics(repeat: usize, cases: &[Case], upstream: &Upstream) {
+fn print_plain_case_diagnostics(result: &BenchResult) {
     println!("per-case diagnostics:");
     println!(
         "  {:<28} {:>7} {:>6} {:>6} {:>9} {:>9} {:>8}",
         "case", "value", "skew", "labels", "Rust", "C", "Rust/C"
     );
+    for diagnostic in &result.diagnostics {
+        println!(
+            "  {:<28} {:>7} {:>6} {:>6} {:>9} {:>9} {:>8.3}x",
+            truncate_label(diagnostic.label, 28),
+            diagnostic.value,
+            diagnostic.skew_size,
+            diagnostic.labels,
+            format_duration(diagnostic.rust_time),
+            format_duration(diagnostic.c_time),
+            diagnostic.ratio()
+        );
+    }
+}
+
+fn case_diagnostics(repeat: usize, cases: &[Case], upstream: &Upstream) -> Vec<CaseDiagnostic> {
+    let mut diagnostics = Vec::with_capacity(cases.len());
     for case in cases {
         let value = rust_lrcoef(case);
         let skew_size = case.outer.iter().sum::<i32>() - case.inner.iter().sum::<i32>();
@@ -216,17 +352,16 @@ fn print_case_diagnostics(repeat: usize, cases: &[Case], upstream: &Upstream) {
         let (rust_time, rust_sink) = time_one(repeat, case, rust_lrcoef);
         let (c_time, c_sink) = time_one(repeat, case, |case| c_lrcoef(upstream, case));
         black_box((rust_sink, c_sink));
-        println!(
-            "  {:<28} {:>7} {:>6} {:>6} {:>9} {:>9} {:>8.3}x",
-            truncate_label(case.label, 28),
+        diagnostics.push(CaseDiagnostic {
+            label: case.label,
             value,
             skew_size,
             labels,
-            format_duration(rust_time),
-            format_duration(c_time),
-            rust_time.as_secs_f64() / c_time.as_secs_f64()
-        );
+            rust_time,
+            c_time,
+        });
     }
+    diagnostics
 }
 
 fn build_cases(upstream: &Upstream, suite: &str) -> Vec<Case> {
@@ -422,6 +557,57 @@ fn format_duration(duration: Duration) -> String {
     } else {
         format!("{:.3}us", seconds * 1_000_000.0)
     }
+}
+
+impl BenchResult {
+    fn evals(&self) -> usize {
+        self.repeat * self.diagnostics.len()
+    }
+
+    fn ratio(&self) -> f64 {
+        self.rust_time.as_secs_f64() / self.c_time.as_secs_f64()
+    }
+
+    fn rust_faster_cases(&self) -> usize {
+        self.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.ratio() < 1.0)
+            .count()
+    }
+
+    fn median_ratio(&self) -> f64 {
+        let mut ratios = self
+            .diagnostics
+            .iter()
+            .map(CaseDiagnostic::ratio)
+            .collect::<Vec<_>>();
+        ratios.sort_by(|left, right| left.total_cmp(right));
+        let mid = ratios.len() / 2;
+        if ratios.len() % 2 == 0 {
+            (ratios[mid - 1] + ratios[mid]) / 2.0
+        } else {
+            ratios[mid]
+        }
+    }
+
+    fn geometric_mean_ratio(&self) -> f64 {
+        let log_sum = self
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.ratio().ln())
+            .sum::<f64>();
+        (log_sum / self.diagnostics.len() as f64).exp()
+    }
+}
+
+impl CaseDiagnostic {
+    fn ratio(&self) -> f64 {
+        self.rust_time.as_secs_f64() / self.c_time.as_secs_f64()
+    }
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 unsafe fn symbol<T: Copy>(handle: *mut libc::c_void, name: &[u8]) -> T {

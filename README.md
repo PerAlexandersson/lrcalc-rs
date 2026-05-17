@@ -84,6 +84,7 @@ timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 timeout 60s nice -n 10 scripts/lrcoef_ffi_bench.sh 5000 mixed
+timeout 60s nice -n 10 scripts/lrcoef_benchmark_report.sh
 timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000
 timeout 60s nice -n 10 scripts/schur_schubert_ffi_bench.sh 500
 ```
