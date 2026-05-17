@@ -35,7 +35,7 @@ fn main() {
     let program = args.next().unwrap_or_else(|| "lrcalc".to_string());
     match args.next().as_deref() {
         Some("--version") | Some("-V") => {
-            println!("lrcalc-new 0.1.0");
+            println!("lrcalc-rs 0.1.0");
         }
         Some("coef" | "lrcoef") => {
             let rest: Vec<String> = args.collect();

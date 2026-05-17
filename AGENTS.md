@@ -1,6 +1,7 @@
-# lrcalc-new Agent Guide
+# lrcalc-rs Agent Guide
 
-This is a standalone Rust project under `/workspace/documents/lrcalc-new`.
+This is the `lrcalc-rs` standalone Rust project, currently checked out under
+`/workspace/documents/lrcalc-new`.
 
 ## Scope
 
@@ -27,4 +28,3 @@ This is a standalone Rust project under `/workspace/documents/lrcalc-new`.
 - Use `timeout 60s nice -n 10 cargo ...` for Rust commands.
 - Coordinate through `HANDOFF.md` and short notes under `notes/`.
 - Avoid editing the same file as another worker.
-

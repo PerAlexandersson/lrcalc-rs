@@ -17,7 +17,7 @@ against upstream C lrcalc, using the Kostka-to-LR translation as the oracle
 bridge. The timed section repeats a mixed fixed suite.
 
 Environment:
-  RUST_BIN       lrcalc-new binary used only for Kostka-to-LR triples
+  RUST_BIN       lrcalc-rs binary used only for Kostka-to-LR triples
   GT_BIN         /workspace/rust/kostka binary to test
   UPSTREAM_BIN   upstream C lrcalc binary used as oracle
   REPEAT         timed repetitions of the case list, default 120
@@ -41,14 +41,14 @@ if [[ ! -x "$UPSTREAM_BIN" ]]; then
   exit 2
 fi
 
-echo "building lrcalc-new release binary..."
+echo "building lrcalc-rs release binary..."
 (cd "$ROOT_DIR" && timeout 60s nice -n 10 cargo build --release >/dev/null)
 
 echo "building GT-DP kostka release binary..."
 (cd /workspace/rust && timeout 60s nice -n 10 cargo build --release -p kostka >/dev/null)
 
 if [[ ! -x "$RUST_BIN" ]]; then
-  echo "lrcalc-new binary not found or not executable: $RUST_BIN" >&2
+  echo "lrcalc-rs binary not found or not executable: $RUST_BIN" >&2
   exit 2
 fi
 if [[ ! -x "$GT_BIN" ]]; then

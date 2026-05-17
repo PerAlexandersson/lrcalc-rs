@@ -444,7 +444,7 @@ Good candidates:
 
 Reasons not to depend on them immediately:
 
-- `lrcalc-new` is intended as standalone ABI crate; path dependencies on
+- `lrcalc-rs` is intended as standalone ABI crate; path dependencies on
   `/workspace/rust` would make packaging and replacement builds fragile.
 - `kostka` pulls broad dependencies and CLI/database-adjacent features not
   needed at the ABI boundary.
@@ -455,5 +455,5 @@ Reasons not to depend on them immediately:
   coefficient.
 
 Recommendation: copy or reimplement the small partition and LR-DP ideas inside
-`lrcalc-new` with attribution if needed, then consider a feature-gated local
+`lrcalc-rs` with attribution if needed, then consider a feature-gated local
 dependency only after ABI compatibility is stable.

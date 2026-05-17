@@ -13,7 +13,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/profile_skew_host.sh [options] [-- lrcalc-args...]
 
-Build lrcalc-new with debug info and frame pointers, then profile it with
+Build lrcalc-rs with debug info and frame pointers, then profile it with
 samply.  This script is intended for a non-Docker host terminal unless the
 Docker container has perf capabilities.
 
@@ -149,7 +149,7 @@ samply_args=(
   record
   --rate "$RATE"
   --output "$OUTPUT"
-  --profile-name "lrcalc-new ${TARGET_ARGS[*]}"
+  --profile-name "lrcalc-rs ${TARGET_ARGS[*]}"
 )
 if ((OPEN == 0)); then
   samply_args+=(--save-only)

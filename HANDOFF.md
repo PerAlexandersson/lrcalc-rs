@@ -1,4 +1,4 @@
-# lrcalc-new Handoff
+# lrcalc-rs Handoff
 
 ## Current Goal
 

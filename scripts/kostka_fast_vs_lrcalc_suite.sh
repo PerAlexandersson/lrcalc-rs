@@ -11,7 +11,7 @@ case "${1:-}" in
     cat <<'EOF'
 Usage: scripts/kostka_fast_vs_lrcalc_suite.sh [repeat]
 
-Compare lrcalc-new's fast u128 Kostka DP against upstream C lrcalc,
+Compare lrcalc-rs's fast u128 Kostka DP against upstream C lrcalc,
 using precomputed Kostka-to-LR triples for the lrcalc side.
 EOF
     exit 0
@@ -32,7 +32,7 @@ if [[ ! -x "$UPSTREAM_BIN" ]]; then
   exit 2
 fi
 
-echo "building lrcalc-new release binary..."
+echo "building lrcalc-rs release binary..."
 (cd "$ROOT_DIR" && timeout 60s nice -n 10 cargo build --release >/dev/null)
 
 CASE_LABELS=()

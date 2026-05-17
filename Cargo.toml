@@ -1,9 +1,9 @@
 [package]
-name = "lrcalc-new"
+name = "lrcalc-rs"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "A Rust implementation targeting ABI and CLI compatibility with Anders Buch's lrcalc."
+description = "A Rust implementation providing a drop-in liblrcalc ABI and CLI surface."
 
 [lib]
 name = "lrcalc"

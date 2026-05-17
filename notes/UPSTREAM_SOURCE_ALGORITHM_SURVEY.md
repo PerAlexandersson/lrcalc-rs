@@ -750,7 +750,7 @@ Local candidates:
 - `/workspace/rust/sym-poly/sym/src/symmetric_function.rs`: skew Schur
   Jacobi-Trudi reference implementation.
 
-Avoid direct path dependencies for now because `lrcalc-new` should remain a
+Avoid direct path dependencies for now because `lrcalc-rs` should remain a
 standalone ABI replacement. Copy small ideas with attribution or reimplement
 locally.
 

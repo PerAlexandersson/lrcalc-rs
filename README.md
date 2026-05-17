@@ -1,7 +1,11 @@
-# lrcalc-new
+# lrcalc-rs
 
-`lrcalc-new` is a standalone Rust implementation targeting compatibility with
+`lrcalc-rs` is a standalone Rust implementation targeting compatibility with
 Anders Buch's `lrcalc` library and command-line tool.
+
+The project/repository name is `lrcalc-rs`; the installed compatibility surface
+keeps the classic names: `liblrcalc.so`, `liblrcalc.a`, `lrcalc`, `schubmult`,
+and eventually `include/lrcalc/...`.
 
 The current crate has a working single Littlewood-Richardson coefficient path,
 several independent LR/Kostka counting engines, Ehrhart interpolation
