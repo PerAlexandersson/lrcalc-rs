@@ -10,13 +10,11 @@ engines.
 
 - Rust crate builds as `liblrcalc` (`cdylib`, `staticlib`, `rlib`) plus a
   `lrcalc` binary and a `schubmult` binary.
-- `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
-  the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
-  It also exports `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
-  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
-  `part_qdegree`, `part_qentry`, `lrit_new`, `lrit_good`, `lrit_next`, and
-  `lrit_free`.  Schubert exports `trans`, `monk`, `mult_poly_schubert`,
-  `mult_schubert`, and `mult_schubert_str` are implemented.
+- `src/abi.rs` exports the upstream C ABI symbol surface: `ivector`,
+  `ivlincomb`, `ilist`, `ivlist`, partition iterators, partition helpers,
+  permutation/string helpers, LR-tableau iterators, Schur/fusion functions,
+  and Schubert functions.  A release `nm` diff against upstream currently has
+  no missing symbols; the only extra export is `lrcalc_new_abi_version`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
@@ -64,7 +62,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
-120 library tests, all benchmark-bin test targets, and doc-tests.
+124 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -148,28 +146,40 @@ binary-string products of length 3.  `timeout 60s nice -n 10 cargo build
 --release` passed, and `nm -D` shows the five Schubert symbols exported from
 `target/release/liblrcalc.so`.
 
+The remaining upstream-exported ABI helpers were added on 2026-05-17:
+`iv_*`, `il_*`, `ivl_*`, `ivlc_equals/print/print_stat`, `part_*`,
+`perm_*`, `pitr_*`, `lrit_count/expand/print/dump`, `lrcoef_count`,
+`maple_*`, `optim_*`, `sksh_*`, `all_strings`, `all_perms`, and
+`get_vect_arg`.  `timeout 60s nice -n 10 cargo test` and `timeout 60s nice -n
+10 cargo build --release` pass.  A release `nm -D` comparison against upstream
+shows no missing exported symbols and only the intentional extra
+`lrcalc_new_abi_version`.
+Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic;
+stable Rust cannot define true variadic exports, so the current symbols are
+fixed-argument compatibility shims covering the first eight initializer values.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now
   matches upstream more closely, but dense cases still trail upstream C because
   the Rust path lacks the exact tight `lrit_next`-style iterator and packed
   output accumulator.
-- Optimize fusion products by porting upstream `optim_fusion` rather than
-  reducing a full row-bounded product.
-- Add C smoke tests for the Schubert ABI and `schubmult` executable.
-- Add compatibility headers and C smoke tests for struct layout and exported
-  symbols.
+- Optimize fusion products by using the newly exposed `optim_fusion` path in
+  `schur_mult_fusion` rather than reducing a full row-bounded product.
+- Add C smoke tests for the ABI surface, including Schubert and `schubmult`.
+- Add compatibility headers and C smoke tests for struct layout.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.
 - Decide which native LR engine should serve each workload class after broader
   benchmarks.
 
 ## Next Useful Work
 
-- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, `schur_skew`, and
-  `schur_coprod`.
+- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, `schur_skew`,
+  `schur_coprod`, Schubert products, and the low-level helper APIs.
 - Add an output-order decision for the CLI: either document unordered output or
   mimic upstream hash iteration more closely.
-- Add an `nm`-based exported-symbol check for P0/P1 ABI coverage.
+- Add an `nm`-based exported-symbol check to CI so full ABI coverage stays
+  visible.
 - Run `scripts/lrcoef_timed_suite.sh` and the Kostka/LR benchmark scripts
   against a freshly built upstream C binary.
 - Add a broader skew expansion corpus, especially shapes where `optim_skew`

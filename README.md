@@ -11,13 +11,10 @@ upstream C.
 ## Implemented
 
 - `liblrcalc` library target configured as `cdylib`, `staticlib`, and `rlib`.
-- C-facing `ivector` allocation/copy/hash/sum functions.
-- C-facing `ivlincomb` allocation, insertion, lookup, iteration, and
-  ownership cleanup functions.
-- C ABI exports for `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
-  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
-  `part_qdegree`, `part_qentry`, `lrit_new`, `lrit_good`, `lrit_next`, and
-  `lrit_free`.
+- C-facing `ivector`, `ivlincomb`, `ilist`, `ivlist`, partition iterator,
+  partition, permutation/string, LR-tableau iterator, Schur, fusion, and
+  Schubert ABI surfaces.  A release `nm` check currently has no missing
+  upstream exported symbols; the only extra export is `lrcalc_new_abi_version`.
 - `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`,
   `lrcalc coprod`, and `lrcalc tab` CLI commands.  `mult` supports ordinary,
   fusion `-f`, and quantum-printing `-q` products.

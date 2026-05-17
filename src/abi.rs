@@ -1,6 +1,6 @@
 //! C ABI types and functions matching the original `lrcalc` headers.
 
-use crate::lrcoef::lrcoef_i64;
+use crate::lrcoef::{lrcoef_i64, optim_coef as native_optim_coef, OptimizedCoef};
 use crate::schubert::{
     monk_product, multiply_poly_schubert, multiply_schubert, multiply_schubert_strings,
     trans_polynomial, LinearCombination,
@@ -9,10 +9,15 @@ use crate::schur::{
     fusion_reduce_values, schur_coproduct_expansion, schur_product_expansion,
     schur_product_fusion_expansion, schur_skew_expansion, SchurTerm, SignedSchurTerm,
 };
-use libc::{c_int, c_longlong, c_void};
+use libc::{c_char, c_int, c_longlong, c_void};
+use std::ffi::CStr;
 use std::mem;
 use std::ptr;
 use std::slice;
+
+unsafe extern "C" {
+    static mut optind: c_int;
+}
 
 #[repr(C)]
 pub struct IVector {
@@ -40,6 +45,38 @@ pub struct IvLinComb {
 }
 
 #[repr(C)]
+pub struct IList {
+    pub array: *mut c_int,
+    pub allocated: usize,
+    pub length: usize,
+}
+
+#[repr(C)]
+pub struct IvList {
+    pub array: *mut *mut IVector,
+    pub allocated: usize,
+    pub length: usize,
+}
+
+#[repr(C)]
+pub struct PartIter {
+    pub part: *mut IVector,
+    pub outer: *mut IVector,
+    pub inner: *mut IVector,
+    pub length: c_int,
+    pub rows: c_int,
+    pub opt: c_int,
+}
+
+#[repr(C)]
+pub struct SkewShapeAbi {
+    pub outer: *mut IVector,
+    pub inner: *mut IVector,
+    pub cont: *mut IVector,
+    pub sign: c_int,
+}
+
+#[repr(C)]
 pub struct IvlcIter {
     pub ht: *mut IvLinComb,
     pub index: u32,
@@ -51,6 +88,9 @@ const IVLC_ARRAY_SZ: u32 = 100;
 const IVLC_USE_FACTOR: u32 = 2;
 const LC_COPY_KEY: c_int = 1;
 const LC_FREE_ZERO: c_int = 2;
+const PITR_USE_OUTER: c_int = 1;
+const PITR_USE_INNER: c_int = 2;
+const PITR_USE_SIZE: c_int = 4;
 
 #[repr(C)]
 pub struct LritBox {
@@ -94,10 +134,28 @@ unsafe fn ivector_values_mut<'a>(v: *mut IVector) -> &'a mut [i32] {
     unsafe { slice::from_raw_parts_mut(data, length) }
 }
 
+unsafe fn ivector_values_mut_len<'a>(v: *mut IVector, length: usize) -> &'a mut [i32] {
+    let data = unsafe { ptr::addr_of_mut!((*v).array).cast::<i32>() };
+    unsafe { slice::from_raw_parts_mut(data, length) }
+}
+
 unsafe fn ivector_values<'a>(v: *const IVector) -> &'a [i32] {
     let length = unsafe { (*v).length as usize };
     let data = unsafe { ptr::addr_of!((*v).array).cast::<i32>() };
     unsafe { slice::from_raw_parts(data, length) }
+}
+
+unsafe fn ivector_data(v: *const IVector) -> *const i32 {
+    unsafe { ptr::addr_of!((*v).array).cast::<i32>() }
+}
+
+unsafe fn ivector_data_mut(v: *mut IVector) -> *mut i32 {
+    unsafe { ptr::addr_of_mut!((*v).array).cast::<i32>() }
+}
+
+unsafe fn ivlist_values_mut<'a>(lst: *mut IvList) -> &'a mut [*mut IVector] {
+    let length = unsafe { (*lst).length };
+    unsafe { slice::from_raw_parts_mut((*lst).array, length) }
 }
 
 fn abi_part_length(partition: &[i32]) -> usize {
@@ -457,6 +515,58 @@ pub unsafe extern "C" fn iv_new_copy(v: *const IVector) -> *mut IVector {
     out
 }
 
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn iv_new_init(
+    length: u32,
+    x0: i32,
+    x1: i32,
+    x2: i32,
+    x3: i32,
+    x4: i32,
+    x5: i32,
+    x6: i32,
+    x7: i32,
+) -> *mut IVector {
+    let v = iv_new(length);
+    if v.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let data = ivector_data_mut(v);
+        if length > 0 {
+            *data.add(0) = x0;
+        }
+        if length > 1 {
+            *data.add(1) = x1;
+        }
+        if length > 2 {
+            *data.add(2) = x2;
+        }
+        if length > 3 {
+            *data.add(3) = x3;
+        }
+        if length > 4 {
+            *data.add(4) = x4;
+        }
+        if length > 5 {
+            *data.add(5) = x5;
+        }
+        if length > 6 {
+            *data.add(6) = x6;
+        }
+        if length > 7 {
+            *data.add(7) = x7;
+        }
+        if length > 8 {
+            for index in 8..length as usize {
+                *data.add(index) = 0;
+            }
+        }
+    }
+    v
+}
+
 /// # Safety
 ///
 /// If `v` is non-null, it must point to a valid mutable `IVector` allocation.
@@ -519,6 +629,323 @@ pub unsafe extern "C" fn iv_sum(v: *const IVector) -> i32 {
 
 /// # Safety
 ///
+/// `dst` and `src` must point to valid vectors of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn iv_copy(dst: *mut IVector, src: *const IVector) {
+    if dst.is_null() || src.is_null() || unsafe { (*dst).length != (*src).length } {
+        return;
+    }
+    let src_values = unsafe { ivector_values(src) };
+    let dst_values = unsafe { ivector_values_mut(dst) };
+    dst_values.copy_from_slice(src_values);
+}
+
+/// # Safety
+///
+/// Non-null pointers must point to valid vectors of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn iv_lesseq(v1: *const IVector, v2: *const IVector) -> c_int {
+    if v1.is_null() || v2.is_null() || unsafe { (*v1).length != (*v2).length } {
+        return 0;
+    }
+    let left = unsafe { ivector_values(v1) };
+    let right = unsafe { ivector_values(v2) };
+    left.iter().zip(right).all(|(&x, &y)| x <= y) as c_int
+}
+
+/// # Safety
+///
+/// `dst` and `src` must point to valid vectors of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn iv_mult(dst: *mut IVector, c: i32, src: *const IVector) {
+    if dst.is_null() || src.is_null() || unsafe { (*dst).length != (*src).length } {
+        return;
+    }
+    let src_values = unsafe { ivector_values(src) };
+    let dst_values = unsafe { ivector_values_mut(dst) };
+    for (out, &value) in dst_values.iter_mut().zip(src_values) {
+        *out = c.wrapping_mul(value);
+    }
+}
+
+/// # Safety
+///
+/// `dst` and `src` must point to valid vectors of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn iv_div(dst: *mut IVector, src: *const IVector, c: i32) {
+    if dst.is_null() || src.is_null() || c == 0 || unsafe { (*dst).length != (*src).length } {
+        return;
+    }
+    let src_values = unsafe { ivector_values(src) };
+    let dst_values = unsafe { ivector_values_mut(dst) };
+    for (out, &value) in dst_values.iter_mut().zip(src_values) {
+        *out = value / c;
+    }
+}
+
+/// # Safety
+///
+/// If `v` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn iv_max(v: *const IVector) -> i32 {
+    if v.is_null() {
+        return i32::MIN;
+    }
+    unsafe { ivector_values(v) }
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(i32::MIN)
+}
+
+/// # Safety
+///
+/// If `v` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn iv_min(v: *const IVector) -> i32 {
+    if v.is_null() {
+        return i32::MAX;
+    }
+    unsafe { ivector_values(v) }
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or(i32::MAX)
+}
+
+/// # Safety
+///
+/// `dst` and `src` must point to valid vectors of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn iv_reverse(dst: *mut IVector, src: *const IVector) {
+    if dst.is_null() || src.is_null() || unsafe { (*dst).length != (*src).length } {
+        return;
+    }
+    let len = unsafe { (*dst).length as usize };
+    for index in 0..len / 2 {
+        let left = unsafe { *ivector_data(src).add(index) };
+        let right = unsafe { *ivector_data(src).add(len - 1 - index) };
+        unsafe {
+            *ivector_data_mut(dst).add(index) = right;
+            *ivector_data_mut(dst).add(len - 1 - index) = left;
+        }
+    }
+    if len % 2 == 1 {
+        unsafe {
+            *ivector_data_mut(dst).add(len / 2) = *ivector_data(src).add(len / 2);
+        }
+    }
+}
+
+/// # Safety
+///
+/// If `v` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn iv_gcd(v: *const IVector) -> i32 {
+    if v.is_null() {
+        return 0;
+    }
+    let mut gcd = 0i32;
+    for &value in unsafe { ivector_values(v) } {
+        let mut x = value;
+        let mut y = gcd;
+        while y != 0 {
+            let z = x % y;
+            x = y;
+            y = z;
+        }
+        gcd = x;
+    }
+    gcd.wrapping_abs()
+}
+
+/// # Safety
+///
+/// If `v` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn iv_print(v: *const IVector) {
+    if v.is_null() {
+        print!("()");
+        return;
+    }
+    print!("(");
+    for (index, value) in unsafe { ivector_values(v) }.iter().enumerate() {
+        if index != 0 {
+            print!(",");
+        }
+        print!("{value}");
+    }
+    print!(")");
+}
+
+/// # Safety
+///
+/// If `v` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn iv_printnl(v: *const IVector) {
+    unsafe { iv_print(v) };
+    println!();
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_valid(p: *const IVector) -> c_int {
+    if p.is_null() {
+        return 0;
+    }
+    abi_valid_partition(unsafe { ivector_values(p) }) as c_int
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_decr(p: *const IVector) -> c_int {
+    if p.is_null() {
+        return 0;
+    }
+    let values = unsafe { ivector_values(p) };
+    values.windows(2).all(|pair| pair[0] >= pair[1]) as c_int
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_length(p: *const IVector) -> c_int {
+    if p.is_null() {
+        return 0;
+    }
+    c_int::try_from(abi_part_length(unsafe { ivector_values(p) })).unwrap_or(c_int::MAX)
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_entry(p: *const IVector, i: c_int) -> c_int {
+    if p.is_null() || i < 0 {
+        return 0;
+    }
+    let values = unsafe { ivector_values(p) };
+    values.get(i as usize).copied().unwrap_or(0)
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid mutable vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_chop(p: *mut IVector) {
+    if p.is_null() {
+        return;
+    }
+    let len = unsafe { part_length(p) };
+    unsafe {
+        (*p).length = u32::try_from(len.max(0)).unwrap_or(0);
+    }
+}
+
+/// # Safety
+///
+/// `p` must have been allocated with enough capacity for `len` entries.
+#[no_mangle]
+pub unsafe extern "C" fn part_unchop(p: *mut IVector, len: c_int) {
+    if p.is_null() || len < 0 {
+        return;
+    }
+    let old_len = unsafe { (*p).length as usize };
+    let new_len = len as usize;
+    if new_len < old_len {
+        unsafe {
+            (*p).length = len as u32;
+        }
+        return;
+    }
+    unsafe {
+        let values = ivector_values_mut_len(p, new_len);
+        values[old_len..new_len].fill(0);
+        (*p).length = len as u32;
+    }
+}
+
+/// # Safety
+///
+/// Non-null pointers must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn part_leq(p1: *const IVector, p2: *const IVector) -> c_int {
+    if p1.is_null() || p2.is_null() {
+        return 0;
+    }
+    abi_partition_leq(unsafe { ivector_values(p1) }, unsafe { ivector_values(p2) }) as c_int
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid partition vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_conj(p: *const IVector) -> *mut IVector {
+    if p.is_null() || unsafe { part_valid(p) } == 0 {
+        return ptr::null_mut();
+    }
+    let values = unsafe { ivector_values(p) };
+    let rows = abi_part_length(values);
+    let cols = if rows == 0 {
+        0
+    } else {
+        values[0].max(0) as usize
+    };
+    let conj = iv_new(cols as u32);
+    if conj.is_null() {
+        return ptr::null_mut();
+    }
+    let out = unsafe { ivector_values_mut(conj) };
+    for (col, entry) in out.iter_mut().enumerate() {
+        let threshold = (col + 1) as i32;
+        *entry = values
+            .iter()
+            .take(rows)
+            .filter(|&&part| part >= threshold)
+            .count() as i32;
+    }
+    conj
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_print(p: *const IVector) {
+    if p.is_null() {
+        print!("()");
+        return;
+    }
+    print!("(");
+    for (index, value) in unsafe { ivector_values(p) }
+        .iter()
+        .take_while(|&&value| value != 0)
+        .enumerate()
+    {
+        if index != 0 {
+            print!(",");
+        }
+        print!("{value}");
+    }
+    print!(")");
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_printnl(p: *const IVector) {
+    unsafe { part_print(p) };
+    println!();
+}
+
+/// # Safety
+///
 /// `p` must point to a valid `IVector` allocation.
 #[no_mangle]
 pub unsafe extern "C" fn part_qdegree(p: *const IVector, level: c_int) -> c_int {
@@ -575,6 +1002,1403 @@ pub unsafe extern "C" fn part_qentry(p: *const IVector, i: c_int, d: c_int, leve
     };
     let value = i64::from(values[source]) - (shifted / rows_i64) * i64::from(level) - i64::from(d);
     i32::try_from(value).unwrap_or(0)
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_qprint(p: *const IVector, level: c_int) {
+    if p.is_null() {
+        print!("()");
+        return;
+    }
+    let d = unsafe { part_qdegree(p, level) };
+    print!("(");
+    let values = unsafe { ivector_values(p) };
+    for index in 0..values.len() {
+        let x = unsafe { part_qentry(p, index as c_int, d, level) };
+        if x == 0 {
+            break;
+        }
+        if index != 0 {
+            print!(",");
+        }
+        print!("{x}");
+    }
+    print!(")");
+}
+
+/// # Safety
+///
+/// If `p` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn part_qprintnl(p: *const IVector, level: c_int) {
+    unsafe { part_qprint(p, level) };
+    println!();
+}
+
+unsafe fn il_realloc_array_inner(lst: *mut IList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let Some(new_allocated) = sz.checked_mul(2) else {
+        return -1;
+    };
+    let Some(bytes) = new_allocated.checked_mul(mem::size_of::<c_int>()) else {
+        return -1;
+    };
+    let raw = unsafe { libc::realloc((*lst).array.cast::<c_void>(), bytes) }.cast::<c_int>();
+    if raw.is_null() {
+        return -1;
+    }
+    unsafe {
+        (*lst).array = raw;
+        (*lst).allocated = new_allocated;
+    }
+    0
+}
+
+unsafe fn ivl_realloc_array_inner(lst: *mut IvList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let Some(new_allocated) = sz.checked_mul(2) else {
+        return -1;
+    };
+    let Some(bytes) = new_allocated.checked_mul(mem::size_of::<*mut IVector>()) else {
+        return -1;
+    };
+    let raw = unsafe { libc::realloc((*lst).array.cast::<c_void>(), bytes) }.cast::<*mut IVector>();
+    if raw.is_null() {
+        return -1;
+    }
+    unsafe {
+        (*lst).array = raw;
+        (*lst).allocated = new_allocated;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_init(lst: *mut IList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let Some(bytes) = sz.checked_mul(mem::size_of::<c_int>()) else {
+        return -1;
+    };
+    let array = unsafe { libc::malloc(bytes) }.cast::<c_int>();
+    if array.is_null() && bytes != 0 {
+        return -1;
+    }
+    unsafe {
+        (*lst).array = array;
+        (*lst).allocated = sz;
+        (*lst).length = 0;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_new(sz: usize) -> *mut IList {
+    let lst = unsafe { libc::malloc(mem::size_of::<IList>()) }.cast::<IList>();
+    if lst.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { il_init(lst, sz) } != 0 {
+        unsafe { libc::free(lst.cast::<c_void>()) };
+        return ptr::null_mut();
+    }
+    lst
+}
+
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn il_new_init(
+    sz: usize,
+    count: usize,
+    x0: c_int,
+    x1: c_int,
+    x2: c_int,
+    x3: c_int,
+    x4: c_int,
+    x5: c_int,
+    x6: c_int,
+    x7: c_int,
+) -> *mut IList {
+    let list = unsafe { il_new(sz) };
+    if list.is_null() {
+        return ptr::null_mut();
+    }
+    if count > 0 && unsafe { il_append(list, x0) } != 0
+        || count > 1 && unsafe { il_append(list, x1) } != 0
+        || count > 2 && unsafe { il_append(list, x2) } != 0
+        || count > 3 && unsafe { il_append(list, x3) } != 0
+        || count > 4 && unsafe { il_append(list, x4) } != 0
+        || count > 5 && unsafe { il_append(list, x5) } != 0
+        || count > 6 && unsafe { il_append(list, x6) } != 0
+        || count > 7 && unsafe { il_append(list, x7) } != 0
+    {
+        unsafe { il_free(list) };
+        return ptr::null_mut();
+    }
+    list
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_dealloc(lst: *mut IList) {
+    if !lst.is_null() {
+        unsafe {
+            libc::free((*lst).array.cast::<c_void>());
+            (*lst).array = ptr::null_mut();
+            (*lst).allocated = 0;
+            (*lst).length = 0;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_free(lst: *mut IList) {
+    if !lst.is_null() {
+        unsafe {
+            il_dealloc(lst);
+            libc::free(lst.cast::<c_void>());
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_reset(lst: *mut IList) {
+    if !lst.is_null() {
+        unsafe {
+            (*lst).length = 0;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il__realloc_array(lst: *mut IList, sz: usize) -> c_int {
+    unsafe { il_realloc_array_inner(lst, sz) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_makeroom(lst: *mut IList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    if sz <= unsafe { (*lst).allocated } {
+        0
+    } else {
+        unsafe { il_realloc_array_inner(lst, sz) }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_append(lst: *mut IList, x: c_int) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let new_len = unsafe { (*lst).length }.saturating_add(1);
+    if unsafe { il_makeroom(lst, new_len) } != 0 {
+        return -1;
+    }
+    unsafe {
+        *(*lst).array.add((*lst).length) = x;
+        (*lst).length = new_len;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_poplast(lst: *mut IList) -> c_int {
+    if lst.is_null() || unsafe { (*lst).length == 0 } {
+        return 0;
+    }
+    unsafe {
+        (*lst).length -= 1;
+        *(*lst).array.add((*lst).length)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_insert(lst: *mut IList, i: usize, x: c_int) -> c_int {
+    if lst.is_null() || i > unsafe { (*lst).length } {
+        return -1;
+    }
+    let len = unsafe { (*lst).length };
+    if unsafe { il_makeroom(lst, len.saturating_add(1)) } != 0 {
+        return -1;
+    }
+    unsafe {
+        ptr::copy((*lst).array.add(i), (*lst).array.add(i + 1), len - i);
+        *(*lst).array.add(i) = x;
+        (*lst).length = len + 1;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_delete(lst: *mut IList, i: usize) -> c_int {
+    if lst.is_null() || i >= unsafe { (*lst).length } {
+        return 0;
+    }
+    unsafe {
+        let value = *(*lst).array.add(i);
+        (*lst).length -= 1;
+        ptr::copy(
+            (*lst).array.add(i + 1),
+            (*lst).array.add(i),
+            (*lst).length - i,
+        );
+        value
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_fastdelete(lst: *mut IList, i: usize) -> c_int {
+    if lst.is_null() || i >= unsafe { (*lst).length } {
+        return 0;
+    }
+    unsafe {
+        let value = *(*lst).array.add(i);
+        (*lst).length -= 1;
+        *(*lst).array.add(i) = *(*lst).array.add((*lst).length);
+        value
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_extend(dst: *mut IList, src: *mut IList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let dlen = unsafe { (*dst).length };
+    let slen = unsafe { (*src).length };
+    if unsafe { il_makeroom(dst, dlen.saturating_add(slen)) } != 0 {
+        return -1;
+    }
+    unsafe {
+        ptr::copy((*src).array, (*dst).array.add(dlen), slen);
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_copy(dst: *mut IList, src: *mut IList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let slen = unsafe { (*src).length };
+    if unsafe { il_makeroom(dst, slen) } != 0 {
+        return -1;
+    }
+    unsafe {
+        (*dst).length = slen;
+        ptr::copy_nonoverlapping((*src).array, (*dst).array, slen);
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_new_copy(lst: *mut IList) -> *mut IList {
+    if lst.is_null() {
+        return ptr::null_mut();
+    }
+    let out = unsafe { il_new((*lst).length) };
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { il_copy(out, lst) } != 0 {
+        unsafe { il_free(out) };
+        return ptr::null_mut();
+    }
+    out
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn il_reverse(dst: *mut IList, src: *mut IList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let n = unsafe { (*src).length };
+    if dst != src && unsafe { il_makeroom(dst, n) } != 0 {
+        return -1;
+    }
+    for i in 0..n / 2 {
+        let left = unsafe { *(*src).array.add(i) };
+        let right = unsafe { *(*src).array.add(n - 1 - i) };
+        unsafe {
+            *(*dst).array.add(i) = right;
+            *(*dst).array.add(n - 1 - i) = left;
+        }
+    }
+    if n % 2 == 1 {
+        unsafe {
+            *(*dst).array.add(n / 2) = *(*src).array.add(n / 2);
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_init(lst: *mut IvList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let Some(bytes) = sz.checked_mul(mem::size_of::<*mut IVector>()) else {
+        return -1;
+    };
+    let array = unsafe { libc::malloc(bytes) }.cast::<*mut IVector>();
+    if array.is_null() && bytes != 0 {
+        return -1;
+    }
+    unsafe {
+        (*lst).array = array;
+        (*lst).allocated = sz;
+        (*lst).length = 0;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_new(sz: usize) -> *mut IvList {
+    let lst = unsafe { libc::malloc(mem::size_of::<IvList>()) }.cast::<IvList>();
+    if lst.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { ivl_init(lst, sz) } != 0 {
+        unsafe { libc::free(lst.cast::<c_void>()) };
+        return ptr::null_mut();
+    }
+    lst
+}
+
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ivl_new_init(
+    sz: usize,
+    count: usize,
+    x0: *mut IVector,
+    x1: *mut IVector,
+    x2: *mut IVector,
+    x3: *mut IVector,
+    x4: *mut IVector,
+    x5: *mut IVector,
+    x6: *mut IVector,
+    x7: *mut IVector,
+) -> *mut IvList {
+    let list = unsafe { ivl_new(sz) };
+    if list.is_null() {
+        return ptr::null_mut();
+    }
+    if count > 0 && unsafe { ivl_append(list, x0) } != 0
+        || count > 1 && unsafe { ivl_append(list, x1) } != 0
+        || count > 2 && unsafe { ivl_append(list, x2) } != 0
+        || count > 3 && unsafe { ivl_append(list, x3) } != 0
+        || count > 4 && unsafe { ivl_append(list, x4) } != 0
+        || count > 5 && unsafe { ivl_append(list, x5) } != 0
+        || count > 6 && unsafe { ivl_append(list, x6) } != 0
+        || count > 7 && unsafe { ivl_append(list, x7) } != 0
+    {
+        unsafe { ivl_free(list) };
+        return ptr::null_mut();
+    }
+    list
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_dealloc(lst: *mut IvList) {
+    if !lst.is_null() {
+        unsafe {
+            libc::free((*lst).array.cast::<c_void>());
+            (*lst).array = ptr::null_mut();
+            (*lst).allocated = 0;
+            (*lst).length = 0;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_free(lst: *mut IvList) {
+    if !lst.is_null() {
+        unsafe {
+            ivl_dealloc(lst);
+            libc::free(lst.cast::<c_void>());
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_free_all(lst: *mut IvList) {
+    if lst.is_null() {
+        return;
+    }
+    unsafe {
+        for &item in ivlist_values_mut(lst).iter() {
+            iv_free(item);
+        }
+        ivl_free(lst);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_reset(lst: *mut IvList) {
+    if !lst.is_null() {
+        unsafe {
+            (*lst).length = 0;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl__realloc_array(lst: *mut IvList, sz: usize) -> c_int {
+    unsafe { ivl_realloc_array_inner(lst, sz) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_makeroom(lst: *mut IvList, sz: usize) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    if sz <= unsafe { (*lst).allocated } {
+        0
+    } else {
+        unsafe { ivl_realloc_array_inner(lst, sz) }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_append(lst: *mut IvList, x: *mut IVector) -> c_int {
+    if lst.is_null() {
+        return -1;
+    }
+    let new_len = unsafe { (*lst).length }.saturating_add(1);
+    if unsafe { ivl_makeroom(lst, new_len) } != 0 {
+        return -1;
+    }
+    unsafe {
+        *(*lst).array.add((*lst).length) = x;
+        (*lst).length = new_len;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_poplast(lst: *mut IvList) -> *mut IVector {
+    if lst.is_null() || unsafe { (*lst).length == 0 } {
+        return ptr::null_mut();
+    }
+    unsafe {
+        (*lst).length -= 1;
+        *(*lst).array.add((*lst).length)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_insert(lst: *mut IvList, i: usize, x: *mut IVector) -> c_int {
+    if lst.is_null() || i > unsafe { (*lst).length } {
+        return -1;
+    }
+    let len = unsafe { (*lst).length };
+    if unsafe { ivl_makeroom(lst, len.saturating_add(1)) } != 0 {
+        return -1;
+    }
+    unsafe {
+        ptr::copy((*lst).array.add(i), (*lst).array.add(i + 1), len - i);
+        *(*lst).array.add(i) = x;
+        (*lst).length = len + 1;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_delete(lst: *mut IvList, i: usize) -> *mut IVector {
+    if lst.is_null() || i >= unsafe { (*lst).length } {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let value = *(*lst).array.add(i);
+        (*lst).length -= 1;
+        ptr::copy(
+            (*lst).array.add(i + 1),
+            (*lst).array.add(i),
+            (*lst).length - i,
+        );
+        value
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_fastdelete(lst: *mut IvList, i: usize) -> *mut IVector {
+    if lst.is_null() || i >= unsafe { (*lst).length } {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let value = *(*lst).array.add(i);
+        (*lst).length -= 1;
+        *(*lst).array.add(i) = *(*lst).array.add((*lst).length);
+        value
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_extend(dst: *mut IvList, src: *mut IvList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let dlen = unsafe { (*dst).length };
+    let slen = unsafe { (*src).length };
+    if unsafe { ivl_makeroom(dst, dlen.saturating_add(slen)) } != 0 {
+        return -1;
+    }
+    unsafe {
+        ptr::copy((*src).array, (*dst).array.add(dlen), slen);
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_copy(dst: *mut IvList, src: *mut IvList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let slen = unsafe { (*src).length };
+    if unsafe { ivl_makeroom(dst, slen) } != 0 {
+        return -1;
+    }
+    unsafe {
+        (*dst).length = slen;
+        ptr::copy_nonoverlapping((*src).array, (*dst).array, slen);
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_new_copy(lst: *mut IvList) -> *mut IvList {
+    if lst.is_null() {
+        return ptr::null_mut();
+    }
+    let out = unsafe { ivl_new((*lst).length) };
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { ivl_copy(out, lst) } != 0 {
+        unsafe { ivl_free(out) };
+        return ptr::null_mut();
+    }
+    out
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ivl_reverse(dst: *mut IvList, src: *mut IvList) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let n = unsafe { (*src).length };
+    if dst != src && unsafe { ivl_makeroom(dst, n) } != 0 {
+        return -1;
+    }
+    for i in 0..n / 2 {
+        let left = unsafe { *(*src).array.add(i) };
+        let right = unsafe { *(*src).array.add(n - 1 - i) };
+        unsafe {
+            *(*dst).array.add(i) = right;
+            *(*dst).array.add(n - 1 - i) = left;
+        }
+    }
+    if n % 2 == 1 {
+        unsafe {
+            *(*dst).array.add(n / 2) = *(*src).array.add(n / 2);
+        }
+    }
+    0
+}
+
+fn abi_perm_group(values: &[i32]) -> usize {
+    let mut len = values.len();
+    while len > 0 && values[len - 1] == len as i32 {
+        len -= 1;
+    }
+    len
+}
+
+fn abi_perm_length(values: &[i32]) -> c_int {
+    let mut inversions = 0i32;
+    for i in 0..values.len().saturating_sub(1) {
+        for j in i + 1..values.len() {
+            if values[i] > values[j] {
+                inversions = inversions.saturating_add(1);
+            }
+        }
+    }
+    inversions
+}
+
+fn abi_dimvec(values: &[i32]) -> Option<Vec<i32>> {
+    let mut classes = 0usize;
+    for &value in values {
+        if value < 0 {
+            return None;
+        }
+        classes = classes.max(usize::try_from(value).ok()?.saturating_add(1));
+    }
+    let mut out = vec![0; classes];
+    for &value in values {
+        out[usize::try_from(value).ok()?] += 1;
+    }
+    for index in 1..out.len() {
+        out[index] += out[index - 1];
+    }
+    Some(out)
+}
+
+/// # Safety
+///
+/// If `w` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn perm_valid(w: *const IVector) -> c_int {
+    if w.is_null() {
+        return 0;
+    }
+    let values = unsafe { ivector_values(w) };
+    let n = values.len();
+    let mut seen = vec![false; n];
+    for &value in values {
+        let Ok(index) = usize::try_from(value - 1) else {
+            return 0;
+        };
+        if index >= n || seen[index] {
+            return 0;
+        }
+        seen[index] = true;
+    }
+    1
+}
+
+/// # Safety
+///
+/// If `w` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn perm_length(w: *const IVector) -> c_int {
+    if w.is_null() {
+        return 0;
+    }
+    abi_perm_length(unsafe { ivector_values(w) })
+}
+
+/// # Safety
+///
+/// If `w` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn perm_group(w: *const IVector) -> c_int {
+    if w.is_null() {
+        return 0;
+    }
+    c_int::try_from(abi_perm_group(unsafe { ivector_values(w) })).unwrap_or(c_int::MAX)
+}
+
+/// # Safety
+///
+/// If `dv` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn dimvec_valid(dv: *const IVector) -> c_int {
+    if dv.is_null() {
+        return 0;
+    }
+    let values = unsafe { ivector_values(dv) };
+    if values.is_empty() || values[0] < 0 {
+        return 0;
+    }
+    values.windows(2).all(|pair| pair[0] <= pair[1]) as c_int
+}
+
+/// # Safety
+///
+/// `w1` and `w2` must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn bruhat_leq(w1: *const IVector, w2: *const IVector) -> c_int {
+    if w1.is_null() || w2.is_null() {
+        return 0;
+    }
+    let left = unsafe { ivector_values(w1) };
+    let right = unsafe { ivector_values(w2) };
+    let n = abi_perm_group(left);
+    if n > abi_perm_group(right) {
+        return 0;
+    }
+    for q in 1..n {
+        let mut r1 = 0;
+        let mut r2 = 0;
+        for p in 0..n.saturating_sub(1) {
+            if left[p] <= q as i32 {
+                r1 += 1;
+            }
+            if right[p] <= q as i32 {
+                r2 += 1;
+            }
+            if r1 < r2 {
+                return 0;
+            }
+        }
+    }
+    1
+}
+
+/// # Safety
+///
+/// `w1` and `w2` must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn bruhat_zero(w1: *const IVector, w2: *const IVector, rank: c_int) -> c_int {
+    if w1.is_null() || w2.is_null() || rank < 0 {
+        return 1;
+    }
+    let mut left = unsafe { ivector_values(w1) };
+    let mut right = unsafe { ivector_values(w2) };
+    let mut n1 = abi_perm_group(left);
+    let n2 = abi_perm_group(right);
+    if n1 > rank as usize || n2 > rank as usize {
+        return 1;
+    }
+    if n1 > n2 {
+        std::mem::swap(&mut left, &mut right);
+        n1 = n2;
+    }
+    for q in 1..n1 {
+        let q2 = rank - q as i32;
+        let mut r1 = 0;
+        let mut r2 = 0;
+        for p in 0..n1.saturating_sub(1) {
+            if left[p] <= q as i32 {
+                r1 += 1;
+            }
+            if right[p] > q2 {
+                r2 += 1;
+            }
+            if r1 < r2 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// # Safety
+///
+/// If `str` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn str2dimvec(str: *const IVector) -> *mut IVector {
+    if str.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(dimvec) = abi_dimvec(unsafe { ivector_values(str) }) else {
+        return ptr::null_mut();
+    };
+    unsafe { ivector_from_partition(&dimvec, dimvec.len()) }
+}
+
+/// # Safety
+///
+/// `str1` and `str2` must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn str_iscompat(str1: *const IVector, str2: *const IVector) -> c_int {
+    if str1.is_null() || str2.is_null() || unsafe { (*str1).length != (*str2).length } {
+        return 0;
+    }
+    let left = abi_dimvec(unsafe { ivector_values(str1) });
+    let right = abi_dimvec(unsafe { ivector_values(str2) });
+    (left.is_some() && left == right) as c_int
+}
+
+/// # Safety
+///
+/// If `str` is non-null, it must point to a valid vector.
+#[no_mangle]
+pub unsafe extern "C" fn string2perm(str: *const IVector) -> *mut IVector {
+    if str.is_null() {
+        return ptr::null_mut();
+    }
+    let string = unsafe { ivector_values(str) };
+    let Some(mut dimvec) = abi_dimvec(string) else {
+        return ptr::null_mut();
+    };
+    let perm = iv_new(string.len() as u32);
+    if perm.is_null() {
+        return ptr::null_mut();
+    }
+    let out = unsafe { ivector_values_mut(perm) };
+    for index in (0..string.len()).rev() {
+        let Ok(class) = usize::try_from(string[index]) else {
+            unsafe { iv_free(perm) };
+            return ptr::null_mut();
+        };
+        dimvec[class] -= 1;
+        let Ok(target) = usize::try_from(dimvec[class]) else {
+            unsafe { iv_free(perm) };
+            return ptr::null_mut();
+        };
+        out[target] = (index + 1) as i32;
+    }
+    perm
+}
+
+/// # Safety
+///
+/// `perm` and `dimvec` must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn perm2string(perm: *const IVector, dimvec: *const IVector) -> *mut IVector {
+    if perm.is_null() || dimvec.is_null() {
+        return ptr::null_mut();
+    }
+    let perm_values = unsafe { ivector_values(perm) };
+    let dim_values = unsafe { ivector_values(dimvec) };
+    let n = dim_values.last().copied().unwrap_or(0);
+    if n < 0 {
+        return ptr::null_mut();
+    }
+    let out = iv_new(n as u32);
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    let out_values = unsafe { ivector_values_mut(out) };
+    let mut j = 0usize;
+    for (class, &limit) in dim_values.iter().enumerate() {
+        let Ok(limit) = usize::try_from(limit) else {
+            unsafe { iv_free(out) };
+            return ptr::null_mut();
+        };
+        while j < limit {
+            let wj = perm_values.get(j).copied().unwrap_or((j + 1) as i32);
+            let Ok(target) = usize::try_from(wj - 1) else {
+                unsafe { iv_free(out) };
+                return ptr::null_mut();
+            };
+            if target >= out_values.len() {
+                unsafe { iv_free(out) };
+                return ptr::null_mut();
+            }
+            out_values[target] = class as i32;
+            j += 1;
+        }
+    }
+    out
+}
+
+/// # Safety
+///
+/// `dimvec` must point to a valid dimension vector.
+#[no_mangle]
+pub unsafe extern "C" fn all_strings(dimvec: *const IVector) -> *mut IvList {
+    if dimvec.is_null() || unsafe { dimvec_valid(dimvec) } == 0 {
+        return ptr::null_mut();
+    }
+    let dim_values = unsafe { ivector_values(dimvec) };
+    let n = dim_values.last().copied().unwrap_or(0);
+    if n < 0 {
+        return ptr::null_mut();
+    }
+    let ld = dim_values.len();
+    let mut counts = vec![0i32; ld];
+    let mut current = Vec::with_capacity(n as usize);
+    let mut j = 0i32;
+    for (class, &limit) in dim_values.iter().enumerate() {
+        while j < limit {
+            current.push(class as i32);
+            j += 1;
+        }
+    }
+
+    let res = unsafe { ivl_new(200) };
+    if res.is_null() {
+        return ptr::null_mut();
+    }
+    if n == 0 {
+        let str_vec = unsafe { ivector_from_partition(&current, current.len()) };
+        if str_vec.is_null() || unsafe { ivl_append(res, str_vec) } != 0 {
+            unsafe {
+                iv_free(str_vec);
+                ivl_free_all(res);
+            }
+            return ptr::null_mut();
+        }
+        return res;
+    }
+
+    loop {
+        let str_vec = unsafe { ivector_from_partition(&current, current.len()) };
+        if str_vec.is_null() || unsafe { ivl_append(res, str_vec) } != 0 {
+            unsafe {
+                iv_free(str_vec);
+                ivl_free_all(res);
+            }
+            return ptr::null_mut();
+        }
+
+        let mut pos = current.len() - 1;
+        counts[current[pos] as usize] += 1;
+        while pos > 0 && current[pos - 1] >= current[pos] {
+            pos -= 1;
+            counts[current[pos] as usize] += 1;
+        }
+        if pos == 0 {
+            break;
+        }
+
+        let mut class = current[pos - 1] as usize;
+        counts[class] += 1;
+        class += 1;
+        while class < counts.len() && counts[class] == 0 {
+            class += 1;
+        }
+        if class == counts.len() {
+            break;
+        }
+        current[pos - 1] = class as i32;
+        counts[class] -= 1;
+
+        for (class, count) in counts.iter_mut().enumerate() {
+            for _ in 0..*count {
+                current[pos] = class as i32;
+                pos += 1;
+            }
+            *count = 0;
+        }
+    }
+
+    res
+}
+
+#[no_mangle]
+pub extern "C" fn all_perms(n: c_int) -> *mut IvList {
+    if n < 0 {
+        return ptr::null_mut();
+    }
+    let dimvec = iv_new((n + 1) as u32);
+    if dimvec.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        for (index, entry) in ivector_values_mut(dimvec).iter_mut().enumerate() {
+            *entry = index as i32;
+        }
+    }
+    let res = unsafe { all_strings(dimvec) };
+    unsafe { iv_free(dimvec) };
+    res
+}
+
+/// # Safety
+///
+/// If `itr` is non-null, it must point to a valid partition iterator.
+#[no_mangle]
+pub unsafe extern "C" fn pitr_good(itr: *const PartIter) -> c_int {
+    if itr.is_null() || unsafe { (*itr).rows < 0 } {
+        0
+    } else {
+        1
+    }
+}
+
+/// # Safety
+///
+/// Pointers must refer to valid iterator/vector storage as in upstream
+/// `pitr_first`.
+#[no_mangle]
+pub unsafe extern "C" fn pitr_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    mut rows: c_int,
+    cols: c_int,
+    outer: *mut IVector,
+    inner: *mut IVector,
+    mut size: c_int,
+    opt: c_int,
+) -> c_int {
+    if itr.is_null() || p.is_null() {
+        return -1;
+    }
+    let use_outer = opt & PITR_USE_OUTER != 0;
+    let use_inner = opt & PITR_USE_INNER != 0;
+    let use_size = opt & PITR_USE_SIZE != 0;
+    unsafe {
+        (*itr).part = p;
+        (*itr).outer = if use_outer { outer } else { ptr::null_mut() };
+        (*itr).inner = if use_inner { inner } else { ptr::null_mut() };
+        (*itr).opt = opt;
+    }
+    if (use_outer && outer.is_null()) || (use_inner && inner.is_null()) {
+        unsafe {
+            (*itr).rows = -1;
+        }
+        return 0;
+    }
+
+    if cols == 0 {
+        rows = 0;
+    }
+    if use_size && rows > size {
+        rows = size;
+    }
+    if use_outer {
+        let outer_len = unsafe { (*outer).length as c_int };
+        if rows > outer_len {
+            rows = outer_len;
+        }
+        while rows > 0 && unsafe { part_entry(outer, rows - 1) } == 0 {
+            rows -= 1;
+        }
+    }
+    unsafe {
+        (*itr).rows = rows;
+        (*itr).length = rows;
+        iv_set_zero(p);
+    }
+
+    if use_inner {
+        let inner_len = unsafe { (*inner).length as c_int };
+        if inner_len > rows && unsafe { part_entry(inner, rows) } != 0 {
+            unsafe {
+                (*itr).rows = -1;
+            }
+            return 0;
+        }
+        if rows > 0 && cols < unsafe { part_entry(inner, 0) } {
+            unsafe {
+                (*itr).rows = -1;
+            }
+            return 0;
+        }
+    }
+
+    let mut inner_sz = 0;
+    if use_size {
+        if size > rows.saturating_mul(cols) {
+            unsafe {
+                (*itr).rows = -1;
+            }
+            return 0;
+        }
+        if use_inner {
+            inner_sz = unsafe { iv_sum(inner) };
+            if size < inner_sz {
+                unsafe {
+                    (*itr).rows = -1;
+                }
+                return 0;
+            }
+        }
+    }
+
+    let mut r = 0;
+    while r < rows {
+        let mut c = cols;
+        if use_outer {
+            c = c.min(unsafe { part_entry(outer, r) });
+        }
+        if use_size {
+            let mut avail = size;
+            if use_inner {
+                inner_sz -= unsafe { part_entry(inner, r) };
+                avail -= inner_sz;
+            }
+            if avail == 0 {
+                unsafe {
+                    (*itr).length = r;
+                }
+                return 0;
+            }
+            c = c.min(avail);
+            size -= c;
+        }
+        unsafe {
+            *ivector_data_mut(p).add(r as usize) = c;
+        }
+        r += 1;
+    }
+
+    if use_size && size > 0 {
+        unsafe {
+            (*itr).rows = -1;
+        }
+        return 0;
+    }
+    unsafe {
+        (*itr).length = r;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_box_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    rows: c_int,
+    cols: c_int,
+) {
+    unsafe { pitr_first(itr, p, rows, cols, ptr::null_mut(), ptr::null_mut(), 0, 0) };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_box_sz_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    rows: c_int,
+    cols: c_int,
+    size: c_int,
+) {
+    unsafe {
+        pitr_first(
+            itr,
+            p,
+            rows,
+            cols,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            size,
+            PITR_USE_SIZE,
+        )
+    };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_sub_first(itr: *mut PartIter, p: *mut IVector, outer: *mut IVector) {
+    let rows = if outer.is_null() {
+        0
+    } else {
+        unsafe { (*outer).length as c_int }
+    };
+    let cols = if rows == 0 {
+        0
+    } else {
+        unsafe { part_entry(outer, 0) }
+    };
+    unsafe {
+        pitr_first(
+            itr,
+            p,
+            rows,
+            cols,
+            outer,
+            ptr::null_mut(),
+            0,
+            PITR_USE_OUTER,
+        )
+    };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_sub_sz_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    outer: *mut IVector,
+    size: c_int,
+) {
+    let rows = if outer.is_null() {
+        0
+    } else {
+        unsafe { (*outer).length as c_int }
+    };
+    let cols = if rows == 0 {
+        0
+    } else {
+        unsafe { part_entry(outer, 0) }
+    };
+    unsafe {
+        pitr_first(
+            itr,
+            p,
+            rows,
+            cols,
+            outer,
+            ptr::null_mut(),
+            size,
+            PITR_USE_OUTER | PITR_USE_SIZE,
+        )
+    };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_between_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    outer: *mut IVector,
+    inner: *mut IVector,
+) {
+    let rows = if outer.is_null() {
+        0
+    } else {
+        unsafe { (*outer).length as c_int }
+    };
+    let cols = if rows == 0 {
+        0
+    } else {
+        unsafe { part_entry(outer, 0) }
+    };
+    unsafe {
+        pitr_first(
+            itr,
+            p,
+            rows,
+            cols,
+            outer,
+            inner,
+            0,
+            PITR_USE_OUTER | PITR_USE_INNER,
+        )
+    };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pitr_between_sz_first(
+    itr: *mut PartIter,
+    p: *mut IVector,
+    outer: *mut IVector,
+    inner: *mut IVector,
+    size: c_int,
+) {
+    let rows = if outer.is_null() {
+        0
+    } else {
+        unsafe { (*outer).length as c_int }
+    };
+    let cols = if rows == 0 {
+        0
+    } else {
+        unsafe { part_entry(outer, 0) }
+    };
+    unsafe {
+        pitr_first(
+            itr,
+            p,
+            rows,
+            cols,
+            outer,
+            inner,
+            size,
+            PITR_USE_OUTER | PITR_USE_INNER | PITR_USE_SIZE,
+        )
+    };
+}
+
+/// # Safety
+///
+/// `itr` must point to an initialized partition iterator.
+#[no_mangle]
+pub unsafe extern "C" fn pitr_next(itr: *mut PartIter) {
+    if itr.is_null() || unsafe { (*itr).rows < 0 } {
+        return;
+    }
+    let p = unsafe { (*itr).part };
+    let outer = unsafe { (*itr).outer };
+    let inner = unsafe { (*itr).inner };
+    let rows = unsafe { (*itr).rows };
+    let opt = unsafe { (*itr).opt };
+    let use_outer = opt & PITR_USE_OUTER != 0;
+    let use_inner = opt & PITR_USE_INNER != 0;
+    let use_size = opt & PITR_USE_SIZE != 0;
+
+    let mut outer_row = rows;
+    let mut size = 0;
+    let mut inner_sz = 0;
+    let mut outer_sz = 0;
+
+    let mut r = unsafe { (*itr).length } - 1;
+    while r >= 0 {
+        if use_size {
+            size += unsafe { part_entry(p, r) };
+        }
+        if use_size && use_inner {
+            inner_sz += unsafe { part_entry(inner, r) };
+        }
+
+        let mut c = unsafe { part_entry(p, r) } - 1;
+        if use_inner && c < unsafe { part_entry(inner, r) } {
+            r -= 1;
+            continue;
+        }
+
+        if use_size && use_outer {
+            while outer_row > 0 && unsafe { part_entry(outer, outer_row - 1) } < c {
+                outer_row -= 1;
+                outer_sz += unsafe { part_entry(outer, outer_row) };
+            }
+        }
+
+        if use_size && size > c.saturating_mul(outer_row - r).saturating_add(outer_sz) {
+            r -= 1;
+            continue;
+        }
+
+        if c == 0 {
+            unsafe {
+                *ivector_data_mut(p).add(r as usize) = 0;
+                (*itr).length = r;
+            }
+            return;
+        }
+
+        unsafe {
+            (*itr).length = rows;
+        }
+        let mut rr = r;
+        while rr < outer_row {
+            if !use_size && use_outer && c > unsafe { part_entry(outer, rr) } {
+                break;
+            }
+            if use_size {
+                let mut avail = size;
+                if use_inner {
+                    inner_sz -= unsafe { part_entry(inner, rr) };
+                    avail -= inner_sz;
+                }
+                if avail == 0 {
+                    break;
+                }
+                c = c.min(avail);
+                size -= c;
+            }
+            unsafe {
+                *ivector_data_mut(p).add(rr as usize) = c;
+            }
+            rr += 1;
+        }
+        if use_outer {
+            while rr < rows {
+                c = unsafe { part_entry(outer, rr) };
+                if use_size {
+                    let mut avail = size;
+                    if use_inner {
+                        inner_sz -= unsafe { part_entry(inner, rr) };
+                        avail -= inner_sz;
+                    }
+                    if avail == 0 {
+                        break;
+                    }
+                    c = c.min(avail);
+                    size -= c;
+                }
+                unsafe {
+                    *ivector_data_mut(p).add(rr as usize) = c;
+                }
+                rr += 1;
+            }
+        }
+        let old_length = unsafe { (*itr).length };
+        let mut j = rr;
+        while j < old_length {
+            unsafe {
+                *ivector_data_mut(p).add(j as usize) = 0;
+            }
+            j += 1;
+        }
+        unsafe {
+            (*itr).length = rr;
+        }
+        return;
+    }
+    unsafe {
+        (*itr).rows = -1;
+    }
 }
 
 /// # Safety
@@ -959,6 +2783,141 @@ pub unsafe extern "C" fn lrit_next(lrit: *mut LrTabIter) {
     unsafe {
         (*lrit).size = -1;
     }
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_count(lrit: *mut LrTabIter) -> *mut IvLinComb {
+    if lrit.is_null() {
+        return ptr::null_mut();
+    }
+    let lc = ivlc_new(IVLC_HASHTABLE_SZ, IVLC_ARRAY_SZ);
+    if lc.is_null() {
+        return ptr::null_mut();
+    }
+    while unsafe { lrit_good(lrit) } != 0 {
+        let cont = unsafe { (*lrit).cont };
+        if cont.is_null()
+            || unsafe { ivlc_add_element(lc, 1, cont, iv_hash(cont) as u32, LC_COPY_KEY) } != 0
+        {
+            unsafe { ivlc_free_all(lc) };
+            return ptr::null_mut();
+        }
+        unsafe { lrit_next(lrit) };
+    }
+    lc
+}
+
+/// # Safety
+///
+/// Vector pointers must be valid as for `lrit_new`.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_expand(
+    outer: *const IVector,
+    inner: *const IVector,
+    content: *const IVector,
+    maxrows: c_int,
+    maxcols: c_int,
+    partsz: c_int,
+) -> *mut IvLinComb {
+    let lrit = unsafe { lrit_new(outer, inner, content, maxrows, maxcols, partsz) };
+    if lrit.is_null() {
+        return ptr::null_mut();
+    }
+    let lc = unsafe { lrit_count(lrit) };
+    unsafe { lrit_free(lrit) };
+    lc
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_print_skewtab(
+    lrit: *mut LrTabIter,
+    outer: *const IVector,
+    inner: *const IVector,
+) {
+    if lrit.is_null() || unsafe { (*lrit).size < 0 } {
+        return;
+    }
+    let size = unsafe { (*lrit).size as usize };
+    let array = unsafe { lrit_array_mut(lrit) };
+    let outer_values = if outer.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(outer) }
+    };
+    let inner_values = if inner.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(inner) }
+    };
+    let ilen = inner_values.len();
+    let mut len = abi_part_length(outer_values);
+    if len <= ilen {
+        while len > 0 && inner_values[len - 1] == outer_values[len - 1] {
+            len -= 1;
+        }
+    }
+    if len == 0 {
+        return;
+    }
+    let col_first = if ilen < len { 0 } else { inner_values[len - 1] };
+    let mut row = 0;
+    while row < ilen && inner_values[row] == outer_values[row] {
+        row += 1;
+    }
+    let mut pos = size;
+    while row < len {
+        let inner_part = inner_values.get(row).copied().unwrap_or(0).max(0) as usize;
+        let outer_part = outer_values[row].max(0) as usize;
+        let row_size = outer_part.saturating_sub(inner_part);
+        pos = pos.saturating_sub(row_size);
+        for _ in col_first.max(0) as usize..inner_part {
+            print!("  ");
+        }
+        for col in 0..row_size {
+            print!("{:2}", array[pos + col].value);
+        }
+        println!();
+        row += 1;
+    }
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_dump(lrit: *mut LrTabIter) {
+    if lrit.is_null() {
+        return;
+    }
+    println!("size={} array_len={}", unsafe { (*lrit).size }, unsafe {
+        (*lrit).array_len
+    });
+    let array_len = unsafe { (*lrit).array_len.max(0) as usize };
+    let array = unsafe { lrit_array_mut(lrit) };
+    for (index, entry) in array.iter().take(array_len).enumerate() {
+        println!(
+            "{index:02}: value={} max={} right={} above={}",
+            entry.value, entry.max, entry.right, entry.above
+        );
+    }
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_dump_skew(
+    lrit: *mut LrTabIter,
+    _outer: *const IVector,
+    _inner: *const IVector,
+) {
+    unsafe { lrit_dump(lrit) };
 }
 
 /// # Safety
@@ -1490,6 +3449,280 @@ pub unsafe extern "C" fn ivlc_add_multiple(
 
 /// # Safety
 ///
+/// `ht1` and `ht2` must point to valid linear combinations.
+#[no_mangle]
+pub unsafe extern "C" fn ivlc_equals(
+    ht1: *mut IvLinComb,
+    ht2: *mut IvLinComb,
+    opt_zero: c_int,
+) -> c_int {
+    if ht1.is_null() || ht2.is_null() {
+        return 0;
+    }
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(ht1, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let kv = ivlc_keyval(&itr);
+            if (*kv).value != 0 || opt_zero != 0 {
+                let other = ivlc_lookup(ht2, (*kv).key, (*kv).hash);
+                if other.is_null() || (*other).value != (*kv).value {
+                    return 0;
+                }
+            }
+            ivlc_next(&mut itr);
+        }
+        ivlc_first(ht2, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let kv = ivlc_keyval(&itr);
+            if (*kv).value != 0 || opt_zero != 0 {
+                let other = ivlc_lookup(ht1, (*kv).key, (*kv).hash);
+                if other.is_null() || (*other).value != (*kv).value {
+                    return 0;
+                }
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+    1
+}
+
+/// # Safety
+///
+/// If `ht` is non-null, it must point to a valid linear combination.
+#[no_mangle]
+pub unsafe extern "C" fn ivlc_print(ht: *mut IvLinComb, opt_zero: c_int) {
+    if ht.is_null() {
+        return;
+    }
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(ht, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let value = ivlc_value(&itr);
+            if value != 0 || opt_zero != 0 {
+                print!("{value}  ");
+                iv_print(ivlc_key(&itr));
+                println!();
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+}
+
+/// # Safety
+///
+/// If `ht` is non-null, it must point to a valid linear combination.
+#[no_mangle]
+pub unsafe extern "C" fn ivlc_print_stat(ht: *mut IvLinComb) {
+    if ht.is_null() {
+        return;
+    }
+    let range = 20usize;
+    let mut stat = vec![0usize; range];
+    let mut used = 0usize;
+    let mut compares = 0usize;
+    unsafe {
+        for index in 0..(*ht).table_sz as usize {
+            let mut i = *(*ht).table.add(index);
+            if i == 0 {
+                continue;
+            }
+            used += 1;
+            let mut count = 0usize;
+            while i != 0 {
+                count += 1;
+                i = (*(*ht).elts.add(i as usize)).next;
+            }
+            compares += (count + 1) * count / 2;
+            let bucket = count.min(range).saturating_sub(1);
+            stat[bucket] += count;
+        }
+        println!("Hash table size: {}", (*ht).table_sz);
+        println!("Hash table used: {used}");
+        println!("Total elements: {}", (*ht).card);
+        if (*ht).card != 0 {
+            println!(
+                "Average compares: {}",
+                compares as f64 / f64::from((*ht).card)
+            );
+        }
+    }
+    print!("Table distribution:");
+    for value in stat {
+        print!(" {value}");
+    }
+    println!();
+}
+
+/// # Safety
+///
+/// If `lc` is non-null, it must point to a valid linear combination.
+#[no_mangle]
+pub unsafe extern "C" fn part_print_lincomb(lc: *mut IvLinComb) {
+    if lc.is_null() {
+        return;
+    }
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let value = ivlc_value(&itr);
+            if value != 0 {
+                print!("{value}  ");
+                part_printnl(ivlc_key(&itr));
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+}
+
+/// # Safety
+///
+/// If `lc` is non-null, it must point to a valid linear combination.
+#[no_mangle]
+pub unsafe extern "C" fn part_qprint_lincomb(lc: *mut IvLinComb, level: c_int) {
+    if lc.is_null() {
+        return;
+    }
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let value = ivlc_value(&itr);
+            if value != 0 {
+                print!("{value}  ");
+                part_qprintnl(ivlc_key(&itr), level);
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+}
+
+unsafe fn maple_term(c: c_int, v: *const IVector, letter: *const c_char, nz: bool) {
+    let sign = if c < 0 { '-' } else { '+' };
+    let coeff = c.wrapping_abs();
+    let letter = if letter.is_null() {
+        "s".into()
+    } else {
+        unsafe { CStr::from_ptr(letter) }.to_string_lossy()
+    };
+    print!("{sign}{coeff}*{letter}[");
+    if !v.is_null() {
+        for (index, &value) in unsafe { ivector_values(v) }.iter().enumerate() {
+            if nz && value == 0 {
+                break;
+            }
+            if index != 0 {
+                print!(",");
+            }
+            print!("{value}");
+        }
+    }
+    print!("]");
+}
+
+/// # Safety
+///
+/// `ht` must point to a valid linear combination; `letter` must be null or a
+/// valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn maple_print_lincomb(ht: *mut IvLinComb, letter: *const c_char, nz: c_int) {
+    print!("0");
+    if ht.is_null() {
+        println!();
+        return;
+    }
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(ht, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let value = ivlc_value(&itr);
+            if value != 0 {
+                maple_term(value, ivlc_key(&itr), letter, nz != 0);
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+    println!();
+}
+
+/// # Safety
+///
+/// `lc` must point to a valid linear combination; `letter` must be null or a
+/// valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn maple_qprint_lincomb(
+    lc: *mut IvLinComb,
+    level: c_int,
+    letter: *const c_char,
+) {
+    print!("0");
+    if lc.is_null() {
+        println!();
+        return;
+    }
+    let letter = if letter.is_null() {
+        "s".into()
+    } else {
+        unsafe { CStr::from_ptr(letter) }.to_string_lossy()
+    };
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let value = ivlc_value(&itr);
+            if value != 0 {
+                let key = ivlc_key(&itr);
+                let degree = part_qdegree(key, level);
+                let coeff = value.wrapping_abs();
+                let sign = if value < 0 { '-' } else { '+' };
+                print!("{sign}{coeff}*q^{degree}*{letter}[");
+                let values = ivector_values(key);
+                for index in 0..values.len() {
+                    let x = part_qentry(key, index as c_int, degree, level);
+                    if x == 0 {
+                        break;
+                    }
+                    if index != 0 {
+                        print!(",");
+                    }
+                    print!("{x}");
+                }
+                print!("]");
+            }
+            ivlc_next(&mut itr);
+        }
+    }
+    println!();
+}
+
+/// # Safety
+///
 /// `w` must point to a valid `IVector` allocation.
 #[no_mangle]
 pub unsafe extern "C" fn trans(w: *const IVector, vars: c_int) -> *mut IvLinComb {
@@ -1595,6 +3828,24 @@ pub unsafe extern "C" fn mult_schubert_str(
         Err(_) => return ptr::null_mut(),
     };
     unsafe { ivlc_from_i32_terms(&terms) }
+}
+
+/// # Safety
+///
+/// Non-null pointers must point to valid `IVector` allocations.
+#[no_mangle]
+pub unsafe extern "C" fn lrcoef_count(
+    outer: *const IVector,
+    inner: *const IVector,
+    content: *const IVector,
+) -> c_longlong {
+    if outer.is_null() || inner.is_null() || content.is_null() {
+        return -1;
+    }
+    let outer = unsafe { ivector_values(outer) };
+    let inner = unsafe { ivector_values(inner) };
+    let content = unsafe { ivector_values(content) };
+    lrcoef_i64(outer, inner, content).unwrap_or(-1)
 }
 
 /// # Safety
@@ -1794,6 +4045,450 @@ pub unsafe extern "C" fn schur_coprod(
     unsafe { ivlc_from_terms(&terms, key_len) }
 }
 
+unsafe fn zero_skew_shape(ss: *mut SkewShapeAbi) {
+    if !ss.is_null() {
+        unsafe {
+            (*ss).outer = ptr::null_mut();
+            (*ss).inner = ptr::null_mut();
+            (*ss).cont = ptr::null_mut();
+            (*ss).sign = 0;
+        }
+    }
+}
+
+unsafe fn fill_skew_shape(
+    ss: *mut SkewShapeAbi,
+    outer: &[i32],
+    inner: Option<&[i32]>,
+    cont: Option<&[i32]>,
+    sign: c_int,
+) -> c_int {
+    if ss.is_null() {
+        return -1;
+    }
+    unsafe { zero_skew_shape(ss) };
+    let outer_ptr = unsafe { ivector_from_partition(outer, outer.len()) };
+    if outer_ptr.is_null() {
+        return -1;
+    }
+    let inner_ptr = if let Some(inner) = inner {
+        let ptr = unsafe { ivector_from_partition(inner, inner.len()) };
+        if ptr.is_null() {
+            unsafe { iv_free(outer_ptr) };
+            return -1;
+        }
+        ptr
+    } else {
+        ptr::null_mut()
+    };
+    let cont_ptr = if let Some(cont) = cont {
+        let ptr = unsafe { ivector_from_partition(cont, cont.len()) };
+        if ptr.is_null() {
+            unsafe {
+                iv_free(outer_ptr);
+                iv_free(inner_ptr);
+            }
+            return -1;
+        }
+        ptr
+    } else {
+        ptr::null_mut()
+    };
+    unsafe {
+        (*ss).outer = outer_ptr;
+        (*ss).inner = inner_ptr;
+        (*ss).cont = cont_ptr;
+        (*ss).sign = sign;
+    }
+    0
+}
+
+/// # Safety
+///
+/// If `ss` is non-null, it must point to a `skew_shape` allocated by the
+/// caller.
+#[no_mangle]
+pub unsafe extern "C" fn sksh_dealloc(ss: *mut SkewShapeAbi) {
+    if ss.is_null() {
+        return;
+    }
+    unsafe {
+        iv_free((*ss).outer);
+        iv_free((*ss).inner);
+        iv_free((*ss).cont);
+        zero_skew_shape(ss);
+    }
+}
+
+/// # Safety
+///
+/// Non-null pointers must point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn sksh_print(
+    outer: *const IVector,
+    inner: *const IVector,
+    cont: *const IVector,
+) {
+    if outer.is_null() {
+        return;
+    }
+    let outer_values = unsafe { ivector_values(outer) };
+    let inner_values = if inner.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(inner) }
+    };
+    let cont_values = if cont.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(cont) }
+    };
+    let mut len = abi_part_length(outer_values);
+    let mut ilen = inner_values.len();
+    if len <= ilen {
+        while len > 0 && inner_values[len - 1] == outer_values[len - 1] {
+            len -= 1;
+        }
+        ilen = len;
+    }
+    let mut row0 = 0;
+    while row0 < ilen && inner_values[row0] == outer_values[row0] {
+        row0 += 1;
+    }
+    let left = if len == 0 || ilen < len {
+        0
+    } else {
+        inner_values[len - 1]
+    };
+    let right = if len == 0 { 0 } else { outer_values[0] };
+    for &part in cont_values.iter().take(abi_part_length(cont_values)) {
+        for _ in left..right {
+            print!(" ");
+        }
+        for _ in 0..part {
+            print!("c");
+        }
+        println!();
+    }
+    for row in row0..len {
+        let inn = inner_values.get(row).copied().unwrap_or(0);
+        let out = outer_values[row];
+        for _ in 0..inn {
+            print!(" ");
+        }
+        for _ in inn..out {
+            print!("s");
+        }
+        println!();
+    }
+}
+
+/// # Safety
+///
+/// `ss`, `sh1`, and optional `sh2` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn optim_mult(
+    ss: *mut SkewShapeAbi,
+    sh1: *const IVector,
+    sh2: *const IVector,
+    maxrows: c_int,
+    maxcols: c_int,
+) -> c_int {
+    if ss.is_null() || sh1.is_null() {
+        return -1;
+    }
+    unsafe { zero_skew_shape(ss) };
+    if unsafe { part_valid(sh1) } == 0 || (!sh2.is_null() && unsafe { part_valid(sh2) } == 0) {
+        return -1;
+    }
+    let mut left = unsafe { ivector_values(sh1) };
+    let mut right = if sh2.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(sh2) }
+    };
+    let mut len1 = abi_part_length(left);
+    let mut len2 = abi_part_length(right);
+    let mut width1 = if len1 == 0 { 0 } else { left[0] };
+    let mut width2 = if len2 == 0 { 0 } else { right[0] };
+    if maxrows >= 0 && (len1 > maxrows as usize || len2 > maxrows as usize) {
+        return 0;
+    }
+    if maxcols >= 0 && (width1 > maxcols || width2 > maxcols) {
+        return 0;
+    }
+    if maxrows >= 0 && maxcols >= 0 {
+        let start = if len1 + len2 < maxrows as usize {
+            len2
+        } else {
+            (maxrows as usize).saturating_sub(len1)
+        };
+        for r in start..len2 {
+            let left_index = maxrows as usize - r - 1;
+            if left[left_index] + right[r] > maxcols {
+                return 0;
+            }
+        }
+    }
+
+    let mut fc1 = if maxrows >= 0 && len1 == maxrows as usize && len1 > 0 {
+        left[len1 - 1]
+    } else {
+        0
+    };
+    let mut fr1 = 0usize;
+    while maxcols >= 0 && fr1 < len1 && left[fr1] == maxcols {
+        fr1 += 1;
+    }
+    let mut fc2 = if maxrows >= 0 && len2 == maxrows as usize && len2 > 0 {
+        right[len2 - 1]
+    } else {
+        0
+    };
+    let mut fr2 = 0usize;
+    while maxcols >= 0 && fr2 < len2 && right[fr2] == maxcols {
+        fr2 += 1;
+    }
+
+    let size1 = left[fr1..len1]
+        .iter()
+        .copied()
+        .sum::<i32>()
+        .saturating_sub((len1 - fr1) as i32 * fc1);
+    let size2 = right[fr2..len2]
+        .iter()
+        .copied()
+        .sum::<i32>()
+        .saturating_sub((len2 - fr2) as i32 * fc2);
+    if size1 > size2 {
+        std::mem::swap(&mut left, &mut right);
+        std::mem::swap(&mut len1, &mut len2);
+        std::mem::swap(&mut width1, &mut width2);
+        std::mem::swap(&mut fc1, &mut fc2);
+        std::mem::swap(&mut fr1, &mut fr2);
+    }
+    let outer = left[fr1..len1]
+        .iter()
+        .map(|part| part - fc1)
+        .collect::<Vec<_>>();
+    let clen = if fc1 + fc2 > 0 {
+        maxrows.max(0) as usize
+    } else {
+        len2 + fr1
+    };
+    let mut cont = vec![fc1; clen];
+    for entry in cont.iter_mut().take(fr1) {
+        *entry = maxcols;
+    }
+    for r in 0..len2 {
+        if fr1 + r < cont.len() {
+            cont[fr1 + r] = right[r] + fc1;
+        }
+    }
+    unsafe { fill_skew_shape(ss, &outer, None, Some(&cont), 1) }
+}
+
+/// # Safety
+///
+/// Pointers must be valid as in upstream `optim_fusion`.
+#[no_mangle]
+pub unsafe extern "C" fn optim_fusion(
+    ss: *mut SkewShapeAbi,
+    sh1: *const IVector,
+    sh2: *const IVector,
+    rows: c_int,
+    level: c_int,
+) -> c_int {
+    if ss.is_null() || sh1.is_null() || sh2.is_null() || rows < 0 {
+        return -1;
+    }
+    unsafe { zero_skew_shape(ss) };
+    if unsafe { part_length(sh1) } > rows || unsafe { part_length(sh2) } > rows {
+        return 0;
+    }
+    let mut left = unsafe { ivector_values(sh1) };
+    let mut right = unsafe { ivector_values(sh2) };
+    let mut d1 = 0;
+    let mut d2 = 0;
+    let mut s1 = rows.saturating_mul(level);
+    let mut s2 = s1;
+    for d in 1..=rows {
+        let s = (rows - d).saturating_mul(level)
+            - rows.saturating_mul(unsafe { part_entry(sh1, d - 1) });
+        if s < s1 {
+            d1 = d;
+            s1 = s;
+        }
+        let s = (rows - d).saturating_mul(level)
+            - rows.saturating_mul(unsafe { part_entry(sh2, d - 1) });
+        if s < s2 {
+            d2 = d;
+            s2 = s;
+        }
+    }
+    if s1 > s2 {
+        std::mem::swap(&mut left, &mut right);
+        d1 = d2;
+    }
+    let d = d1;
+    let sh1d = left.get((d - 1) as usize).copied().unwrap_or(0);
+    let rows_usize = rows as usize;
+    let d_usize = d as usize;
+    let mut nsh1 = vec![0; rows_usize];
+    let mut nsh2 = vec![0; rows_usize];
+    for i in 0..rows_usize.saturating_sub(d_usize) {
+        nsh1[i] = left.get(d_usize + i).copied().unwrap_or(0) - sh1d + level;
+    }
+    for i in 0..d_usize {
+        nsh1[rows_usize - d_usize + i] = left.get(i).copied().unwrap_or(0) - sh1d;
+    }
+    for i in 0..d_usize {
+        nsh2[i] = right
+            .get(rows_usize.saturating_sub(d_usize) + i)
+            .copied()
+            .unwrap_or(0)
+            + sh1d;
+    }
+    for i in 0..rows_usize.saturating_sub(d_usize) {
+        nsh2[d_usize + i] = right.get(i).copied().unwrap_or(0) + sh1d - level;
+    }
+    unsafe { fill_skew_shape(ss, &nsh1, None, Some(&nsh2), 1) }
+}
+
+/// # Safety
+///
+/// Pointers must be valid as in upstream `optim_skew`.
+#[no_mangle]
+pub unsafe extern "C" fn optim_skew(
+    ss: *mut SkewShapeAbi,
+    outer: *const IVector,
+    inner: *const IVector,
+    content: *const IVector,
+    maxrows: c_int,
+) -> c_int {
+    if ss.is_null() || outer.is_null() {
+        return -1;
+    }
+    unsafe { zero_skew_shape(ss) };
+    if inner.is_null() {
+        return unsafe { optim_mult(ss, outer, content, maxrows, -1) };
+    }
+    if unsafe { part_valid(outer) } == 0
+        || unsafe { part_valid(inner) } == 0
+        || (!content.is_null() && unsafe { part_valid(content) } == 0)
+    {
+        return -1;
+    }
+    if unsafe { part_leq(inner, outer) } == 0 {
+        return 0;
+    }
+    if maxrows >= 0 && !content.is_null() && unsafe { part_length(content) } > maxrows {
+        return 0;
+    }
+    let outer_values = unsafe { ivector_values(outer) };
+    let inner_values = unsafe { ivector_values(inner) };
+    let content_values = if content.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(content) }
+    };
+    unsafe {
+        fill_skew_shape(
+            ss,
+            &outer_values[..abi_part_length(outer_values)],
+            Some(&inner_values[..abi_part_length(inner_values)]),
+            Some(&content_values[..abi_part_length(content_values)]),
+            1,
+        )
+    }
+}
+
+/// # Safety
+///
+/// Pointers must be valid as in upstream `optim_coef`.
+#[no_mangle]
+pub unsafe extern "C" fn optim_coef(
+    ss: *mut SkewShapeAbi,
+    out: *const IVector,
+    sh1: *const IVector,
+    sh2: *const IVector,
+) -> c_int {
+    if ss.is_null() || out.is_null() || sh1.is_null() || sh2.is_null() {
+        return -1;
+    }
+    unsafe { zero_skew_shape(ss) };
+    let out_values = unsafe { ivector_values(out) };
+    let sh1_values = unsafe { ivector_values(sh1) };
+    let sh2_values = unsafe { ivector_values(sh2) };
+    match native_optim_coef(out_values, sh1_values, sh2_values) {
+        Ok(OptimizedCoef::Zero) => 0,
+        Ok(OptimizedCoef::One) => {
+            unsafe {
+                (*ss).sign = 1;
+            }
+            0
+        }
+        Ok(OptimizedCoef::Count(shape)) => unsafe {
+            fill_skew_shape(
+                ss,
+                &shape.outer,
+                Some(&shape.inner),
+                Some(&shape.content),
+                2,
+            )
+        },
+        Err(_) => -1,
+    }
+}
+
+/// # Safety
+///
+/// `av` must be a valid `argv` array with `ac` elements. This follows
+/// upstream's `optind`-based parser.
+#[no_mangle]
+pub unsafe extern "C" fn get_vect_arg(ac: c_int, av: *mut *mut c_char) -> *mut IVector {
+    if av.is_null() || ac < 0 {
+        return ptr::null_mut();
+    }
+    unsafe {
+        if optind == ac {
+            return ptr::null_mut();
+        }
+        if optind == 0 {
+            optind += 1;
+        } else if optind < ac {
+            let arg = *av.add(optind as usize);
+            if !arg.is_null() {
+                let first = *arg;
+                let second = *arg.add(1);
+                if (first == b'-' as c_char || first == b'/' as c_char) && second == 0 {
+                    optind += 1;
+                }
+            }
+        }
+    }
+
+    let mut values = Vec::new();
+    unsafe {
+        while optind < ac {
+            let arg = *av.add(optind as usize);
+            if arg.is_null() {
+                break;
+            }
+            let text = CStr::from_ptr(arg).to_string_lossy();
+            let Ok(value) = text.parse::<i32>() else {
+                break;
+            };
+            values.push(value);
+            optind += 1;
+        }
+    }
+    if values.is_empty() {
+        return ptr::null_mut();
+    }
+    unsafe { ivector_from_partition(&values, values.len()) }
+}
+
 #[no_mangle]
 pub extern "C" fn lrcalc_new_abi_version() -> u32 {
     0
@@ -1911,6 +4606,118 @@ mod tests {
     }
 
     #[test]
+    fn vector_partition_and_list_helpers_match_c_surface() {
+        unsafe {
+            let v = vector_from_values(&[4, 2, 0]);
+            let w = vector_from_values(&[2, 1, 0]);
+            let dst = iv_new_zero(3);
+            assert_eq!(part_valid(v), 1);
+            assert_eq!(part_decr(v), 1);
+            assert_eq!(part_length(v), 2);
+            assert_eq!(part_entry(v, 7), 0);
+            assert_eq!(part_leq(w, v), 1);
+            assert_eq!(iv_lesseq(w, v), 1);
+
+            iv_mult(dst, 2, w);
+            assert_eq!(ivector_values(dst), &[4, 2, 0]);
+            iv_reverse(dst, v);
+            assert_eq!(ivector_values(dst), &[0, 2, 4]);
+            assert_eq!(iv_max(v), 4);
+            assert_eq!(iv_min(v), 0);
+            let gcd_input = vector_from_values(&[6, 9, 15]);
+            assert_eq!(iv_gcd(gcd_input), 3);
+            iv_free(gcd_input);
+            let initialized = iv_new_init(3, 5, 4, 3, 0, 0, 0, 0, 0);
+            assert_eq!(ivector_values(initialized), &[5, 4, 3]);
+
+            let conj = part_conj(v);
+            assert!(!conj.is_null());
+            assert_eq!(ivector_values(conj), &[2, 2, 1, 1]);
+
+            let list = il_new(1);
+            assert!(!list.is_null());
+            assert_eq!(il_append(list, 7), 0);
+            assert_eq!(il_insert(list, 0, 3), 0);
+            assert_eq!(il_poplast(list), 7);
+            assert_eq!(il_poplast(list), 3);
+            let initialized_list = il_new_init(2, 2, 11, 13, 0, 0, 0, 0, 0, 0);
+            assert!(!initialized_list.is_null());
+            assert_eq!((*initialized_list).length, 2);
+            assert_eq!(*(*initialized_list).array.add(0), 11);
+            assert_eq!(*(*initialized_list).array.add(1), 13);
+
+            iv_free(conj);
+            il_free(initialized_list);
+            il_free(list);
+            iv_free(initialized);
+            iv_free(dst);
+            iv_free(w);
+            iv_free(v);
+        }
+    }
+
+    #[test]
+    fn permutation_string_and_partition_iterator_helpers_work() {
+        unsafe {
+            let perm = vector_from_values(&[2, 1, 3]);
+            assert_eq!(perm_valid(perm), 1);
+            assert_eq!(perm_length(perm), 1);
+            assert_eq!(perm_group(perm), 2);
+
+            let string = vector_from_values(&[0, 1, 0]);
+            let dimvec = str2dimvec(string);
+            assert!(!dimvec.is_null());
+            assert_eq!(ivector_values(dimvec), &[2, 3]);
+
+            let as_perm = string2perm(string);
+            assert!(!as_perm.is_null());
+            assert_eq!(ivector_values(as_perm), &[1, 3, 2]);
+            let back = perm2string(as_perm, dimvec);
+            assert!(!back.is_null());
+            assert_eq!(ivector_values(back), &[0, 1, 0]);
+
+            let strings = all_strings(dimvec);
+            assert!(!strings.is_null());
+            assert_eq!((*strings).length, 3);
+
+            let p = iv_new_zero(2);
+            let mut itr = PartIter {
+                part: ptr::null_mut(),
+                outer: ptr::null_mut(),
+                inner: ptr::null_mut(),
+                length: 0,
+                rows: 0,
+                opt: 0,
+            };
+            pitr_box_first(&mut itr, p, 2, 2);
+            let mut parts = Vec::new();
+            while pitr_good(&itr) != 0 {
+                parts.push(ivector_values(p).to_vec());
+                pitr_next(&mut itr);
+            }
+            assert_eq!(
+                parts,
+                vec![
+                    vec![2, 2],
+                    vec![2, 1],
+                    vec![2, 0],
+                    vec![1, 1],
+                    vec![1, 0],
+                    vec![0, 0]
+                ]
+            );
+
+            iv_free(p);
+            ivl_free_all(strings);
+            iv_free(back);
+            iv_free(as_perm);
+            iv_free(dimvec);
+            iv_free(string);
+            iv_free(perm);
+        }
+    }
+
+    #[test]
     fn part_quantum_helpers_match_upstream_formula() {
         unsafe {
             let p = vector_from_values(&[3, 2, 1]);
@@ -1939,6 +4746,39 @@ mod tests {
             assert_eq!(collect_lrit_contents(lrit), vec![vec![1, 1], vec![2]]);
 
             lrit_free(lrit);
+            iv_free(inner);
+            iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn lrit_count_expand_and_lrcoef_count_return_abi_results() {
+        unsafe {
+            let outer = vector_from_values(&[2, 1]);
+            let inner = vector_from_values(&[1]);
+            let lrit = lrit_new(outer, inner, ptr::null(), -1, -1, -1);
+            assert!(!lrit.is_null());
+            let counted = lrit_count(lrit);
+            assert!(!counted.is_null());
+            assert_eq!(
+                collect_lc_trimmed(counted),
+                vec![(vec![1, 1], 1), (vec![2], 1)]
+            );
+            lrit_free(lrit);
+
+            let expanded = lrit_expand(outer, inner, ptr::null(), -1, -1, -1);
+            assert!(!expanded.is_null());
+            assert_eq!(
+                collect_lc_trimmed(expanded),
+                vec![(vec![1, 1], 1), (vec![2], 1)]
+            );
+
+            let content = vector_from_values(&[1, 1]);
+            assert_eq!(lrcoef_count(outer, inner, content), 1);
+
+            iv_free(content);
+            ivlc_free_all(expanded);
+            ivlc_free_all(counted);
             iv_free(inner);
             iv_free(outer);
         }
@@ -2125,6 +4965,39 @@ mod tests {
             iv_free(inner2);
             iv_free(inner1);
             iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn optimization_wrappers_fill_skew_shape_records() {
+        unsafe {
+            let sh1 = vector_from_values(&[1]);
+            let sh2 = vector_from_values(&[1]);
+            let mut ss = SkewShapeAbi {
+                outer: ptr::null_mut(),
+                inner: ptr::null_mut(),
+                cont: ptr::null_mut(),
+                sign: 0,
+            };
+            assert_eq!(optim_mult(&mut ss, sh1, sh2, -1, -1), 0);
+            assert_eq!(ss.sign, 1);
+            assert_eq!(ivector_values(ss.outer), &[1]);
+            assert_eq!(ivector_values(ss.cont), &[1]);
+            sksh_dealloc(&mut ss);
+
+            let out = vector_from_values(&[3, 2, 1]);
+            let coef_inner = vector_from_values(&[2, 1]);
+            assert_eq!(optim_coef(&mut ss, out, coef_inner, coef_inner), 0);
+            assert_eq!(ss.sign, 2);
+            assert!(!ss.outer.is_null());
+            assert!(!ss.inner.is_null());
+            assert!(!ss.cont.is_null());
+            sksh_dealloc(&mut ss);
+
+            iv_free(coef_inner);
+            iv_free(out);
+            iv_free(sh2);
+            iv_free(sh1);
         }
     }
 
