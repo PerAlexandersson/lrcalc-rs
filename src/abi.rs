@@ -375,6 +375,66 @@ pub unsafe extern "C" fn iv_sum(v: *const IVector) -> i32 {
 
 /// # Safety
 ///
+/// `p` must point to a valid `IVector` allocation.
+#[no_mangle]
+pub unsafe extern "C" fn part_qdegree(p: *const IVector, level: c_int) -> c_int {
+    if p.is_null() {
+        return 0;
+    }
+    let values = unsafe { ivector_values(p) };
+    let rows = values.len();
+    let Ok(rows_i64) = i64::try_from(rows) else {
+        return 0;
+    };
+    let n = rows_i64 + i64::from(level);
+    if rows == 0 || n <= 0 {
+        return 0;
+    }
+
+    let mut degree = 0i64;
+    for (index, &value) in values.iter().enumerate() {
+        let Ok(index_i64) = i64::try_from(index) else {
+            return 0;
+        };
+        let Some(a) = i64::from(value)
+            .checked_add(rows_i64)
+            .and_then(|a| a.checked_sub(index_i64))
+            .and_then(|a| a.checked_sub(1))
+        else {
+            return 0;
+        };
+        degree += a.div_euclid(n);
+    }
+    i32::try_from(degree).unwrap_or(0)
+}
+
+/// # Safety
+///
+/// `p` must point to a valid `IVector` allocation.
+#[no_mangle]
+pub unsafe extern "C" fn part_qentry(p: *const IVector, i: c_int, d: c_int, level: c_int) -> c_int {
+    if p.is_null() {
+        return 0;
+    }
+    let values = unsafe { ivector_values(p) };
+    let rows = values.len();
+    let Ok(rows_i64) = i64::try_from(rows) else {
+        return 0;
+    };
+    if rows == 0 {
+        return 0;
+    }
+
+    let shifted = i64::from(i) + i64::from(d);
+    let Ok(source) = usize::try_from(shifted.rem_euclid(rows_i64)) else {
+        return 0;
+    };
+    let value = i64::from(values[source]) - (shifted / rows_i64) * i64::from(level) - i64::from(d);
+    i32::try_from(value).unwrap_or(0)
+}
+
+/// # Safety
+///
 /// `ht` must point to writable storage for an `IvLinComb`.
 #[no_mangle]
 pub unsafe extern "C" fn ivlc_init(ht: *mut IvLinComb, tabsz: u32, eltsz: u32) -> c_int {
@@ -1175,6 +1235,25 @@ mod tests {
 
             iv_free(copy);
             iv_free(v);
+        }
+    }
+
+    #[test]
+    fn part_quantum_helpers_match_upstream_formula() {
+        unsafe {
+            let p = vector_from_values(&[3, 2, 1]);
+            let degree = part_qdegree(p, 2);
+            assert_eq!(degree, 1);
+            assert_eq!(part_qentry(p, 0, degree, 2), 1);
+            assert_eq!(part_qentry(p, 1, degree, 2), 0);
+
+            let rectangle = vector_from_values(&[2, 2, 2]);
+            assert_eq!(part_qdegree(rectangle, 2), 0);
+            assert_eq!(part_qentry(rectangle, 0, 0, 2), 2);
+            assert_eq!(part_qentry(rectangle, 2, 0, 2), 2);
+
+            iv_free(rectangle);
+            iv_free(p);
         }
     }
 

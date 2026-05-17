@@ -15,7 +15,8 @@ upstream C.
 - C-facing `ivlincomb` allocation, insertion, lookup, iteration, and
   ownership cleanup functions.
 - C ABI exports for `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
-  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, and `schur_coprod`.
+  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
+  `part_qdegree`, and `part_qentry`.
 - `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`, and
   `lrcalc coprod` CLI commands.  `mult` supports ordinary, fusion `-f`, and
   quantum-printing `-q` products.

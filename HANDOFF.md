@@ -13,7 +13,8 @@ engines.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
   It also exports `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
-  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, and `schur_coprod`.
+  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
+  `part_qdegree`, and `part_qentry`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
@@ -58,7 +59,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
-110 library tests, all benchmark-bin test targets, and doc-tests.
+111 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -121,7 +122,8 @@ against upstream passed for `mult -f 2,1 1 - 1`,
 `mult -m -q 3,2 2 1 - 2 1`, modulo output order.  A small sorted-output
 comparison also matched upstream on eight fusion and six quantum examples.
 `timeout 60s nice -n 10 cargo build --release` passed, and `nm -D` shows the
-three fusion symbols exported from `target/release/liblrcalc.so`.
+three fusion symbols plus `part_qdegree` and `part_qentry` exported from
+`target/release/liblrcalc.so`.
 
 ## Main Gaps
 
