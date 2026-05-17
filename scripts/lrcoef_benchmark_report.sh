@@ -42,6 +42,7 @@ emit_report() {
   echo "- Upstream library: \`$UPSTREAM_LIB\`"
   echo "- LR FFI template: \`timeout 60s nice -n 10 cargo run --release --bin lrcoef_ffi_bench -- --markdown <repeat> <suite>\`"
   echo "- Kostka template: \`timeout 60s nice -n 10 cargo run --release --bin kostka_bench -- --markdown <repeat>\`"
+  echo "- Stretched Kostka-as-LR template: \`timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- --markdown <repeat> <max-scale>\`"
   echo "- Stretched LR template: \`timeout 60s nice -n 10 cargo run --release --bin lr_hstar_bench -- --markdown <repeat> <stretch>\`"
   echo
   echo "The LR FFI suites check Rust results against upstream C before timing. Ratios"
