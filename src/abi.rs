@@ -2,7 +2,8 @@
 
 use crate::lrcoef::lrcoef_i64;
 use crate::schur::{
-    schur_coproduct_expansion, schur_product_expansion, schur_skew_expansion, SchurTerm,
+    fusion_reduce_values, schur_coproduct_expansion, schur_product_expansion,
+    schur_product_fusion_expansion, schur_skew_expansion, SchurTerm, SignedSchurTerm,
 };
 use libc::{c_int, c_longlong, c_void};
 use std::mem;
@@ -165,6 +166,33 @@ unsafe fn ivector_from_partition(partition: &[i32], length: usize) -> *mut IVect
 }
 
 unsafe fn ivlc_from_terms(terms: &[SchurTerm], key_len: usize) -> *mut IvLinComb {
+    let initial_elts = u32::try_from(terms.len().saturating_add(1))
+        .unwrap_or(u32::MAX)
+        .max(IVLC_ARRAY_SZ);
+    let lc = ivlc_new(IVLC_HASHTABLE_SZ, initial_elts);
+    if lc.is_null() {
+        return ptr::null_mut();
+    }
+    for term in terms {
+        let Ok(value) = i32::try_from(term.coefficient) else {
+            unsafe { ivlc_free_all(lc) };
+            return ptr::null_mut();
+        };
+        let key = unsafe { ivector_from_partition(&term.partition, key_len) };
+        if key.is_null() {
+            unsafe { ivlc_free_all(lc) };
+            return ptr::null_mut();
+        }
+        let hash = unsafe { iv_hash(key) } as u32;
+        if unsafe { ivlc_add_element(lc, value, key, hash, LC_FREE_ZERO) } != 0 {
+            unsafe { ivlc_free_all(lc) };
+            return ptr::null_mut();
+        }
+    }
+    lc
+}
+
+unsafe fn ivlc_from_signed_terms(terms: &[SignedSchurTerm], key_len: usize) -> *mut IvLinComb {
     let initial_elts = u32::try_from(terms.len().saturating_add(1))
         .unwrap_or(u32::MAX)
         .max(IVLC_ARRAY_SZ);
@@ -916,6 +944,115 @@ pub unsafe extern "C" fn schur_mult(
 
 /// # Safety
 ///
+/// `la` and `tmp` must point to valid `IVector` allocations of the same length.
+#[no_mangle]
+pub unsafe extern "C" fn fusion_reduce(la: *mut IVector, level: c_int, tmp: *mut IVector) -> c_int {
+    if la.is_null() || tmp.is_null() || unsafe { (*la).length != (*tmp).length } {
+        return 0;
+    }
+    let values = unsafe { ivector_values(la) }.to_vec();
+    let (reduced, sign) = match fusion_reduce_values(&values, level) {
+        Ok(Some(reduced)) => reduced,
+        Ok(None) | Err(_) => return 0,
+    };
+    unsafe {
+        ivector_values_mut(la).copy_from_slice(&reduced);
+    }
+    sign
+}
+
+/// # Safety
+///
+/// `lc` must point to a valid linear combination whose keys are owned by the
+/// table.
+#[no_mangle]
+pub unsafe extern "C" fn fusion_reduce_lc(lc: *mut IvLinComb, level: c_int) -> c_int {
+    if lc.is_null() {
+        return -1;
+    }
+
+    let mut terms = Vec::<(*mut IVector, i32)>::new();
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            terms.push((ivlc_key(&itr), ivlc_value(&itr)));
+            ivlc_next(&mut itr);
+        }
+        ivlc_reset(lc);
+    }
+
+    while let Some((key, value)) = terms.pop() {
+        let values = unsafe { ivector_values(key) }.to_vec();
+        let reduced = match fusion_reduce_values(&values, level) {
+            Ok(reduced) => reduced,
+            Err(_) => {
+                unsafe { iv_free(key) };
+                for (remaining_key, _) in terms {
+                    unsafe { iv_free(remaining_key) };
+                }
+                return -1;
+            }
+        };
+        let coefficient = match reduced {
+            Some((reduced, sign)) => {
+                unsafe {
+                    ivector_values_mut(key).copy_from_slice(&reduced);
+                }
+                match value.checked_mul(sign) {
+                    Some(coefficient) => coefficient,
+                    None => {
+                        unsafe { iv_free(key) };
+                        for (remaining_key, _) in terms {
+                            unsafe { iv_free(remaining_key) };
+                        }
+                        return -1;
+                    }
+                }
+            }
+            None => 0,
+        };
+        let hash = unsafe { iv_hash(key) } as u32;
+        if unsafe { ivlc_add_element(lc, coefficient, key, hash, LC_FREE_ZERO) } != 0 {
+            for (remaining_key, _) in terms {
+                unsafe { iv_free(remaining_key) };
+            }
+            return -1;
+        }
+    }
+
+    0
+}
+
+/// # Safety
+///
+/// Non-null pointers must point to valid `IVector` allocations.
+#[no_mangle]
+pub unsafe extern "C" fn schur_mult_fusion(
+    sh1: *const IVector,
+    sh2: *const IVector,
+    rows: c_int,
+    level: c_int,
+) -> *mut IvLinComb {
+    if sh1.is_null() || sh2.is_null() {
+        return ptr::null_mut();
+    }
+    let sh1_values = unsafe { ivector_values(sh1) };
+    let sh2_values = unsafe { ivector_values(sh2) };
+    let terms = match schur_product_fusion_expansion(sh1_values, sh2_values, rows, level) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    let key_len = usize::try_from(rows).unwrap_or(0);
+    unsafe { ivlc_from_signed_terms(&terms, key_len) }
+}
+
+/// # Safety
+///
 /// Non-null pointers must point to valid `IVector` allocations.
 #[no_mangle]
 pub unsafe extern "C" fn schur_skew(
@@ -1188,6 +1325,76 @@ mod tests {
                 collect_lc_lengths(lc),
                 vec![(vec![1, 1], 4, 1), (vec![2], 4, 1)]
             );
+
+            ivlc_free_all(lc);
+            iv_free(sh2);
+            iv_free(sh1);
+        }
+    }
+
+    #[test]
+    fn fusion_reduce_abi_mutates_vector() {
+        unsafe {
+            let la = vector_from_values(&[2, 0]);
+            let tmp = iv_new_zero(2);
+            assert!(!tmp.is_null());
+
+            assert_eq!(fusion_reduce(la, 0, tmp), -1);
+            assert_eq!(ivector_values(la), &[1, 1]);
+
+            iv_free(tmp);
+            iv_free(la);
+        }
+    }
+
+    #[test]
+    fn fusion_reduce_lc_cancels_zero_terms() {
+        unsafe {
+            let lc = ivlc_new(5, 2);
+            assert!(!lc.is_null());
+            let first = vector_from_values(&[2, 0]);
+            let first_hash = iv_hash(first) as u32;
+            let second = vector_from_values(&[1, 1]);
+            let second_hash = iv_hash(second) as u32;
+
+            assert_eq!(ivlc_add_element(lc, 1, first, first_hash, LC_FREE_ZERO), 0);
+            assert_eq!(
+                ivlc_add_element(lc, 1, second, second_hash, LC_FREE_ZERO),
+                0
+            );
+            assert_eq!(fusion_reduce_lc(lc, 0), 0);
+            assert!(collect_lc_trimmed(lc).is_empty());
+
+            ivlc_free_all(lc);
+        }
+    }
+
+    #[test]
+    fn schur_mult_fusion_returns_reduced_product() {
+        unsafe {
+            let sh1 = vector_from_values(&[2, 1]);
+            let sh2 = vector_from_values(&[2, 1]);
+            let lc = schur_mult_fusion(sh1, sh2, 3, 2);
+            assert!(!lc.is_null());
+            assert_eq!(
+                collect_lc_trimmed(lc),
+                vec![(vec![2, 2, 2], 1), (vec![3, 2, 1], 1)]
+            );
+
+            ivlc_free_all(lc);
+            iv_free(sh2);
+            iv_free(sh1);
+        }
+    }
+
+    #[test]
+    fn schur_mult_fusion_uses_row_length_keys() {
+        unsafe {
+            let sh1 = vector_from_values(&[1]);
+            let sh2 = vector_from_values(&[1]);
+            let lc = schur_mult_fusion(sh1, sh2, 2, 1);
+            assert!(!lc.is_null());
+            assert_eq!(collect_lc_lengths(lc), vec![(vec![1, 1], 2, 1)]);
 
             ivlc_free_all(lc);
             iv_free(sh2);

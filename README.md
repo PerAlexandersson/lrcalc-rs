@@ -14,10 +14,11 @@ upstream C.
 - C-facing `ivector` allocation/copy/hash/sum functions.
 - C-facing `ivlincomb` allocation, insertion, lookup, iteration, and
   ownership cleanup functions.
-- C ABI exports for `schur_lrcoef`, `schur_mult`, `schur_skew`, and
-  `schur_coprod`.
+- C ABI exports for `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
+  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, and `schur_coprod`.
 - `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`, and
-  `lrcalc coprod` CLI commands.
+  `lrcalc coprod` CLI commands.  `mult` supports ordinary, fusion `-f`, and
+  quantum-printing `-q` products.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
@@ -28,6 +29,8 @@ upstream C.
   forced components into the beta prefix before the shared content expansion.
 - Schur product and coproduct expansion via the same shared skew Schur backend,
   using disconnected skew shapes and upstream-style coproduct filtering.
+- Fusion product expansion by row-bounded Schur multiplication followed by
+  upstream-style affine fusion reduction.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -42,7 +45,6 @@ upstream C.
 
 ## Not Yet Implemented
 
-- Fusion and quantum product ABI functions.
 - LR tableau iterator ABI.
 - Schubert polynomial ABI and `schubmult` compatibility.
 - Installed compatibility headers.
@@ -63,6 +65,8 @@ The Rust library target is named `lrcalc`, so release builds should produce
 ```bash
 timeout 60s nice -n 10 cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- mult 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -f 3,2 2 1 - 2 1
+timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -q 3,2 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- skew 3 2 1 / 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1

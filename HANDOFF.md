@@ -12,8 +12,8 @@ engines.
   `lrcalc` binary.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
-  It also exports `schur_lrcoef`, `schur_mult`, `schur_skew`, and
-  `schur_coprod`.
+  It also exports `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
+  `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, and `schur_coprod`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
@@ -22,6 +22,9 @@ engines.
   first applies an upstream-style `optim_skew` shape reduction, folds forced
   components into a beta prefix, and then uses the variable-content beta
   tableau enumerator so all residual contents are accumulated in one search.
+  Fusion products currently use the upstream test identity: compute the
+  row-bounded ordinary product, affine-reduce every term, and merge signed
+  collisions.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -39,7 +42,8 @@ engines.
   and beta-prefix stretched families.
 - CLI commands expose the coefficient engines, beta-prefix LR counts,
   diagnostic/stat modes, and ordinary upstream-style `mult`, `skew`, and
-  `coprod`.  Fusion/quantum, `tab`, and `schubmult` are still missing.
+  `coprod`.  `mult -f rows,level` and `mult -q rows,level` are implemented.
+  `tab` and `schubmult` are still missing.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -53,8 +57,8 @@ engines.
 
 ## Verified
 
-`timeout 60s nice -n 10 cargo test` passed on 2026-05-16:
-95 library tests, all benchmark-bin test targets, and doc-tests.
+`timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
+110 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -110,14 +114,24 @@ Schur product now uses disconnected skew Schur expansion.  On 2026-05-17,
 `mult 8 6 4 2 - 8 6 4 2` ran about `1.75x` faster than the previous scalar
 product loop, and `mult 12 9 6 3 - 12 9 6 3` ran about `2.60x` faster.
 
+Fusion product support was added on 2026-05-17.  Focused Rust and ABI tests pass
+for `fusion_reduce`, `fusion_reduce_lc`, and `schur_mult_fusion`.  CLI checks
+against upstream passed for `mult -f 2,1 1 - 1`,
+`mult -f 3,2 2 1 - 2 1`, and Maple quantum output for
+`mult -m -q 3,2 2 1 - 2 1`, modulo output order.  A small sorted-output
+comparison also matched upstream on eight fusion and six quantum examples.
+`timeout 60s nice -n 10 cargo build --release` passed, and `nm -D` shows the
+three fusion symbols exported from `target/release/liblrcalc.so`.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now
   matches upstream more closely, but dense cases still trail upstream C because
   the Rust path lacks the exact tight `lrit_next`-style iterator and packed
   output accumulator.
-- Implement C ABI functions for fusion/quantum, LR tableau iteration, and
-  Schubert products.
+- Optimize fusion products by porting upstream `optim_fusion` rather than
+  reducing a full row-bounded product.
+- Implement C ABI functions for LR tableau iteration and Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.

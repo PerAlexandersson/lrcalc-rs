@@ -22,8 +22,8 @@ use lrcalc::lrcoef::{
     LrBuchInteriorStats, LrCoefError,
 };
 use lrcalc::schur::{
-    schur_coproduct_expansion, schur_product_expansion, schur_skew_expansion, SchurExpansionError,
-    SchurTerm,
+    schur_coproduct_expansion, schur_product_expansion, schur_product_fusion_expansion,
+    schur_skew_expansion, SchurExpansionError, SchurTerm, SignedSchurTerm,
 };
 
 fn main() {
@@ -48,11 +48,37 @@ fn main() {
         Some("mult") => {
             let rest: Vec<String> = args.collect();
             match parse_mult_args(&rest).and_then(|parsed| {
-                schur_product_expansion(&parsed.left, &parsed.right, parsed.rows, parsed.cols)
-                    .map(|terms| (terms, parsed.maple))
-                    .map_err(format_schur_error)
+                match parsed.mode {
+                    MultMode::Ordinary { rows, cols } => {
+                        let terms =
+                            schur_product_expansion(&parsed.left, &parsed.right, rows, cols)
+                                .map_err(format_schur_error)?;
+                        print_schur_terms(&terms, parsed.maple);
+                    }
+                    MultMode::Fusion { rows, level } => {
+                        let terms = schur_product_fusion_expansion(
+                            &parsed.left,
+                            &parsed.right,
+                            rows,
+                            level,
+                        )
+                        .map_err(format_schur_error)?;
+                        print_signed_schur_terms(&terms, parsed.maple);
+                    }
+                    MultMode::Quantum { rows, level } => {
+                        let terms = schur_product_fusion_expansion(
+                            &parsed.left,
+                            &parsed.right,
+                            rows,
+                            level,
+                        )
+                        .map_err(format_schur_error)?;
+                        print_quantum_schur_terms(&terms, parsed.maple, rows, level);
+                    }
+                }
+                Ok(())
             }) {
-                Ok((terms, maple)) => print_schur_terms(&terms, maple),
+                Ok(()) => {}
                 Err(message) => {
                     eprintln!("{program}: {message}");
                     std::process::exit(2);
@@ -759,9 +785,14 @@ fn main() {
 struct MultArgs {
     left: Vec<i32>,
     right: Vec<i32>,
-    rows: i32,
-    cols: i32,
+    mode: MultMode,
     maple: bool,
+}
+
+enum MultMode {
+    Ordinary { rows: i32, cols: i32 },
+    Fusion { rows: i32, level: i32 },
+    Quantum { rows: i32, level: i32 },
 }
 
 struct SkewArgs {
@@ -781,6 +812,7 @@ struct CoprodArgs {
 fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
     let mut rows = -1;
     let mut cols = -1;
+    let mut mode = None;
     let mut maple = false;
     let mut parts = Vec::new();
     let mut index = 0;
@@ -804,10 +836,33 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
                 cols = parse_i32_option(value, "cols")?;
                 index += 2;
             }
-            "-q" | "-f" => {
-                return Err(
-                    "quantum/fusion Schur multiplication is not implemented yet".to_string()
-                );
+            "-f" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -f".to_string())?;
+                let (fusion_rows, level) = parse_i32_pair_option(value, "rows", "level")?;
+                if fusion_rows <= 0 || level < 0 {
+                    return Err("fusion rows must be positive and level nonnegative".to_string());
+                }
+                mode = Some(MultMode::Fusion {
+                    rows: fusion_rows,
+                    level,
+                });
+                index += 2;
+            }
+            "-q" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -q".to_string())?;
+                let (quantum_rows, level) = parse_i32_pair_option(value, "rows", "level")?;
+                if quantum_rows <= 0 || level < 0 {
+                    return Err("quantum rows must be positive and level nonnegative".to_string());
+                }
+                mode = Some(MultMode::Quantum {
+                    rows: quantum_rows,
+                    level,
+                });
+                index += 2;
             }
             token => {
                 parts.push(token.to_string());
@@ -818,13 +873,12 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
     let [left, right] = parse_partition_pair_with_separator(
         &parts,
         "-",
-        "usage: mult [-m] [-r rows] [-c cols] PART1 - PART2",
+        "usage: mult [-m] [-r rows] [-c cols] [-q rows,level] [-f rows,level] PART1 - PART2",
     )?;
     Ok(MultArgs {
         left,
         right,
-        rows,
-        cols,
+        mode: mode.unwrap_or(MultMode::Ordinary { rows, cols }),
         maple,
     })
 }
@@ -898,6 +952,21 @@ fn parse_i32_option(value: &str, name: &str) -> Result<i32, String> {
     value
         .parse::<i32>()
         .map_err(|_| format!("invalid {name} value '{value}'"))
+}
+
+fn parse_i32_pair_option(
+    value: &str,
+    first_name: &str,
+    second_name: &str,
+) -> Result<(i32, i32), String> {
+    let Some((left, right)) = value.split_once(',') else {
+        return Err(format!(
+            "expected {first_name},{second_name} value, got '{value}'"
+        ));
+    };
+    let left = parse_i32_option(left, first_name)?;
+    let right = parse_i32_option(right, second_name)?;
+    Ok((left, right))
 }
 
 fn parse_partition_triple(args: &[String]) -> Result<[Vec<i32>; 3], String> {
@@ -1087,6 +1156,57 @@ fn print_schur_terms(terms: &[SchurTerm], maple: bool) {
     }
 }
 
+fn print_signed_schur_terms(terms: &[SignedSchurTerm], maple: bool) {
+    if maple {
+        print!("0");
+        for term in terms {
+            print_signed_maple_prefix(term.coefficient);
+            print!("*s[{}]", format_comma_partition(&term.partition));
+        }
+        println!();
+        return;
+    }
+
+    for term in terms {
+        println!(
+            "{}  ({})",
+            term.coefficient,
+            format_comma_partition(&term.partition)
+        );
+    }
+}
+
+fn print_quantum_schur_terms(terms: &[SignedSchurTerm], maple: bool, rows: i32, level: i32) {
+    let rows = usize::try_from(rows).unwrap_or(0);
+    if maple {
+        print!("0");
+        for term in terms {
+            let (degree, partition) = quantum_partition_and_degree(&term.partition, rows, level);
+            print_signed_maple_prefix(term.coefficient);
+            print!("*q^{degree}*s[{}]", format_comma_i64_partition(&partition));
+        }
+        println!();
+        return;
+    }
+
+    for term in terms {
+        let (_, partition) = quantum_partition_and_degree(&term.partition, rows, level);
+        println!(
+            "{}  ({})",
+            term.coefficient,
+            format_comma_i64_partition(&partition)
+        );
+    }
+}
+
+fn print_signed_maple_prefix(coefficient: i128) {
+    if coefficient < 0 {
+        print!("-{}", coefficient.unsigned_abs());
+    } else {
+        print!("+{coefficient}");
+    }
+}
+
 fn print_coproduct_terms(terms: &[SchurTerm], rows: i32, cols: i32) {
     let rows = usize::try_from(rows).unwrap_or(0);
     for term in terms {
@@ -1126,6 +1246,45 @@ fn format_comma_partition(partition: &[i32]) -> String {
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn format_comma_i64_partition(partition: &[i64]) -> String {
+    partition
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn quantum_partition_and_degree(partition: &[i32], rows: usize, level: i32) -> (i64, Vec<i64>) {
+    let degree = quantum_degree(partition, rows, level);
+    let rows_i64 = i64::try_from(rows).unwrap_or(1).max(1);
+    let level_i64 = i64::from(level);
+    let mut out = Vec::new();
+    for index in 0..rows {
+        let shifted = i64::try_from(index).unwrap_or(0) + degree;
+        let source = usize::try_from(shifted.rem_euclid(rows_i64)).unwrap_or(0);
+        let entry = i64::from(partition.get(source).copied().unwrap_or(0))
+            - (shifted / rows_i64) * level_i64
+            - degree;
+        if entry == 0 {
+            break;
+        }
+        out.push(entry);
+    }
+    (degree, out)
+}
+
+fn quantum_degree(partition: &[i32], rows: usize, level: i32) -> i64 {
+    let rows_i64 = i64::try_from(rows).unwrap_or(1).max(1);
+    let n = rows_i64 + i64::from(level);
+    let mut degree = 0i64;
+    for index in 0..rows {
+        let index_i64 = i64::try_from(index).unwrap_or(0);
+        let a = i64::from(partition.get(index).copied().unwrap_or(0)) + rows_i64 - index_i64 - 1;
+        degree += a.div_euclid(n);
+    }
+    degree
 }
 
 fn format_optional_usize(value: Option<usize>) -> String {

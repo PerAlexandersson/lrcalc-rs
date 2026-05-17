@@ -6,11 +6,18 @@
 
 use crate::lrcoef::{beta_lr_content_expansion, LrCoefError};
 use crate::partition::Partition;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchurTerm {
     pub partition: Vec<i32>,
     pub coefficient: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignedSchurTerm {
+    pub partition: Vec<i32>,
+    pub coefficient: i128,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +121,160 @@ pub fn schur_coproduct_expansion(
     Ok(terms)
 }
 
+pub fn fusion_reduce_partition(
+    partition: &[i32],
+    rows: usize,
+    level: i32,
+) -> Result<Option<(Vec<i32>, i32)>, SchurExpansionError> {
+    validate_partition(partition)?;
+    if partition
+        .iter()
+        .enumerate()
+        .skip(rows)
+        .any(|(_, &part)| part != 0)
+    {
+        return Ok(None);
+    }
+
+    let mut values = vec![0; rows];
+    for (index, &part) in partition.iter().take(rows).enumerate() {
+        values[index] = part;
+    }
+    let Some((reduced, sign)) = fusion_reduce_values(&values, level)? else {
+        return Ok(None);
+    };
+    Ok(Some((trim_trailing_zeroes(&reduced), sign)))
+}
+
+pub fn schur_product_fusion_expansion(
+    sh1: &[i32],
+    sh2: &[i32],
+    rows: i32,
+    level: i32,
+) -> Result<Vec<SignedSchurTerm>, SchurExpansionError> {
+    validate_partition(sh1)?;
+    validate_partition(sh2)?;
+    if rows <= 0 || level < 0 {
+        return Err(SchurExpansionError::InvalidPartition);
+    }
+    let rows = usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+    if has_nonzero_entry_at_or_after(sh1, rows) || has_nonzero_entry_at_or_after(sh2, rows) {
+        return Ok(Vec::new());
+    }
+
+    let ordinary_terms = schur_product_expansion(sh1, sh2, rows as i32, -1)?;
+    let mut merged = BTreeMap::<Vec<i32>, i128>::new();
+    for term in ordinary_terms {
+        let Some((partition, sign)) = fusion_reduce_partition(&term.partition, rows, level)? else {
+            continue;
+        };
+        let coefficient = i128::try_from(term.coefficient)
+            .map_err(|_| SchurExpansionError::ArithmeticOverflow)?
+            .checked_mul(i128::from(sign))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let entry = merged.entry(partition.clone()).or_insert(0);
+        *entry = entry
+            .checked_add(coefficient)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        if *entry == 0 {
+            merged.remove(&partition);
+        }
+    }
+
+    let mut terms = merged
+        .into_iter()
+        .map(|(partition, coefficient)| SignedSchurTerm {
+            partition,
+            coefficient,
+        })
+        .collect::<Vec<_>>();
+    terms.sort_by(|left, right| right.partition.cmp(&left.partition));
+    Ok(terms)
+}
+
+pub(crate) fn fusion_reduce_values(
+    values: &[i32],
+    level: i32,
+) -> Result<Option<(Vec<i32>, i32)>, SchurExpansionError> {
+    let rows = values.len();
+    if rows == 0 || level < 0 {
+        return Err(SchurExpansionError::InvalidPartition);
+    }
+    let rows_i64 = i64::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+    let level_i64 = i64::from(level);
+    let n = rows_i64
+        .checked_add(level_i64)
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    if n <= 0 {
+        return Err(SchurExpansionError::InvalidPartition);
+    }
+
+    let mut q = 0i64;
+    let mut tmp = Vec::with_capacity(rows);
+    for (index, &value) in values.iter().enumerate() {
+        let index_i64 =
+            i64::try_from(index).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+        let a = i64::from(value)
+            .checked_add(rows_i64)
+            .and_then(|a| a.checked_sub(index_i64))
+            .and_then(|a| a.checked_sub(1))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let b = floor_div_i64(a, n);
+        q = q
+            .checked_add(b)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let shifted = a
+            .checked_sub(
+                b.checked_mul(n)
+                    .ok_or(SchurExpansionError::ArithmeticOverflow)?,
+            )
+            .and_then(|a| a.checked_sub(rows_i64))
+            .and_then(|a| a.checked_add(1))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        tmp.push(shifted);
+    }
+
+    let mut sign_parity = if rows % 2 == 1 { 0 } else { q.rem_euclid(2) };
+    for index in 0..rows.saturating_sub(1) {
+        let mut max_index = index;
+        let mut max_value = tmp[max_index];
+        for next in index + 1..rows {
+            if max_value < tmp[next] {
+                max_index = next;
+                max_value = tmp[max_index];
+            }
+        }
+        if max_index != index {
+            tmp[max_index] = tmp[index];
+            tmp[index] = max_value;
+            sign_parity ^= 1;
+        }
+    }
+
+    let mut reduced = vec![0; rows];
+    for index in 0..rows {
+        if index > 0 && tmp[index - 1] == tmp[index] {
+            return Ok(None);
+        }
+        let index_i64 =
+            i64::try_from(index).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+        let k = index_i64
+            .checked_add(q)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let quotient = k / rows_i64;
+        let a = tmp[index]
+            .checked_add(k)
+            .and_then(|a| a.checked_add(quotient.checked_mul(level_i64)?))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let target = usize::try_from(k.rem_euclid(rows_i64))
+            .map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+        reduced[target] = i32::try_from(a).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+    }
+
+    let sign = if sign_parity == 0 { 1 } else { -1 };
+    Ok(Some((reduced, sign)))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OptimizedSkewShape {
     outer: Vec<i32>,
@@ -161,6 +322,14 @@ fn col_bound(cols: i32, size: i32) -> Result<i32, SchurExpansionError> {
     } else {
         Ok(size)
     }
+}
+
+fn has_nonzero_entry_at_or_after(partition: &[i32], index: usize) -> bool {
+    partition.iter().skip(index).any(|&part| part != 0)
+}
+
+fn floor_div_i64(numerator: i64, denominator: i64) -> i64 {
+    numerator.div_euclid(denominator)
 }
 
 fn disconnected_product_skew_shape(
@@ -555,6 +724,7 @@ where
 mod tests {
     use super::*;
     use crate::lrcoef::lrcoef;
+    use std::collections::BTreeMap;
 
     fn term_map(terms: Vec<SchurTerm>) -> Vec<(Vec<i32>, u128)> {
         terms
@@ -565,6 +735,19 @@ mod tests {
 
     fn sorted_term_map(terms: Vec<SchurTerm>) -> Vec<(Vec<i32>, u128)> {
         let mut terms = term_map(terms);
+        terms.sort();
+        terms
+    }
+
+    fn signed_term_map(terms: Vec<SignedSchurTerm>) -> Vec<(Vec<i32>, i128)> {
+        terms
+            .into_iter()
+            .map(|term| (term.partition, term.coefficient))
+            .collect()
+    }
+
+    fn sorted_signed_term_map(terms: Vec<SignedSchurTerm>) -> Vec<(Vec<i32>, i128)> {
+        let mut terms = signed_term_map(terms);
         terms.sort();
         terms
     }
@@ -641,6 +824,32 @@ mod tests {
         }
         terms.sort();
         Ok(terms)
+    }
+
+    fn scalar_fusion_expansion(
+        sh1: &[i32],
+        sh2: &[i32],
+        rows: i32,
+        level: i32,
+    ) -> Result<Vec<(Vec<i32>, i128)>, SchurExpansionError> {
+        let rows_usize =
+            usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
+        let mut merged = BTreeMap::<Vec<i32>, i128>::new();
+        for (partition, coefficient) in scalar_product_expansion(sh1, sh2, rows, -1)? {
+            let Some((reduced, sign)) = fusion_reduce_partition(&partition, rows_usize, level)?
+            else {
+                continue;
+            };
+            let coefficient = i128::try_from(coefficient)
+                .map_err(|_| SchurExpansionError::ArithmeticOverflow)?
+                * i128::from(sign);
+            let entry = merged.entry(reduced.clone()).or_insert(0);
+            *entry += coefficient;
+            if *entry == 0 {
+                merged.remove(&reduced);
+            }
+        }
+        Ok(merged.into_iter().collect())
     }
 
     #[test]
@@ -750,6 +959,76 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn fusion_reduce_matches_upstream_spot_checks() {
+        assert_eq!(fusion_reduce_partition(&[2], 2, 1).unwrap(), None);
+        assert_eq!(
+            fusion_reduce_partition(&[1, 1], 2, 1).unwrap(),
+            Some((vec![1, 1], 1))
+        );
+        assert_eq!(
+            fusion_reduce_partition(&[2], 2, 0).unwrap(),
+            Some((vec![1, 1], -1))
+        );
+    }
+
+    #[test]
+    fn fusion_product_matches_upstream_examples() {
+        let terms = schur_product_fusion_expansion(&[1], &[1], 2, 1).unwrap();
+        assert_eq!(sorted_signed_term_map(terms), vec![(vec![1, 1], 1)]);
+
+        let terms = schur_product_fusion_expansion(&[1], &[1], 2, 2).unwrap();
+        assert_eq!(
+            sorted_signed_term_map(terms),
+            vec![(vec![1, 1], 1), (vec![2], 1)]
+        );
+
+        let terms = schur_product_fusion_expansion(&[2, 1], &[2, 1], 3, 2).unwrap();
+        assert_eq!(
+            sorted_signed_term_map(terms),
+            vec![(vec![2, 2, 2], 1), (vec![3, 2, 1], 1)]
+        );
+    }
+
+    #[test]
+    fn fusion_product_matches_scalar_reference_for_small_shapes() {
+        for size1 in 0..=4 {
+            for sh1 in partitions_of(size1) {
+                for size2 in 0..=4 {
+                    for sh2 in partitions_of(size2) {
+                        for rows in 1..=4 {
+                            for level in 0..=4 {
+                                assert_eq!(
+                                    sorted_signed_term_map(
+                                        schur_product_fusion_expansion(&sh1, &sh2, rows, level)
+                                            .unwrap()
+                                    ),
+                                    scalar_fusion_expansion(&sh1, &sh2, rows, level).unwrap(),
+                                    "sh1={sh1:?} sh2={sh2:?} rows={rows} level={level}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fusion_product_handles_invalid_or_too_long_inputs() {
+        assert_eq!(
+            schur_product_fusion_expansion(&[1], &[1], 0, 1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
+        assert_eq!(
+            schur_product_fusion_expansion(&[1], &[1], 2, -1),
+            Err(SchurExpansionError::InvalidPartition)
+        );
+        assert!(schur_product_fusion_expansion(&[1, 1], &[1], 1, 2)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
