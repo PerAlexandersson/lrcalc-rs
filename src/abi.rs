@@ -64,6 +64,21 @@ pub struct LrTabIter {
     pub array: [LritBox; 1],
 }
 
+fn lrtab_iter_alloc_size(array_len: usize) -> Option<usize> {
+    let entries = array_len.max(1);
+    mem::size_of::<LrTabIter>().checked_add(
+        entries
+            .checked_sub(1)?
+            .checked_mul(mem::size_of::<LritBox>())?,
+    )
+}
+
+unsafe fn lrit_array_mut<'a>(lrit: *mut LrTabIter) -> &'a mut [LritBox] {
+    let length = unsafe { (*lrit).array_len as usize };
+    let data = unsafe { ptr::addr_of_mut!((*lrit).array).cast::<LritBox>() };
+    unsafe { slice::from_raw_parts_mut(data, length) }
+}
+
 fn ivector_alloc_size(length: u32) -> Option<usize> {
     let entries = usize::try_from(length).ok()?.max(1);
     mem::size_of::<u32>().checked_add(entries.checked_mul(mem::size_of::<i32>())?)
@@ -79,6 +94,32 @@ unsafe fn ivector_values<'a>(v: *const IVector) -> &'a [i32] {
     let length = unsafe { (*v).length as usize };
     let data = unsafe { ptr::addr_of!((*v).array).cast::<i32>() };
     unsafe { slice::from_raw_parts(data, length) }
+}
+
+fn abi_part_length(partition: &[i32]) -> usize {
+    partition
+        .iter()
+        .rposition(|&part| part != 0)
+        .map_or(0, |index| index + 1)
+}
+
+fn abi_valid_partition(partition: &[i32]) -> bool {
+    let mut previous = 0;
+    for &part in partition.iter().rev() {
+        if part < previous {
+            return false;
+        }
+        previous = part;
+    }
+    true
+}
+
+fn abi_partition_leq(left: &[i32], right: &[i32]) -> bool {
+    let len = abi_part_length(left);
+    if len > abi_part_length(right) {
+        return false;
+    }
+    (0..len).all(|index| left[index] <= right[index])
 }
 
 fn ivlc_table_alloc_size(length: u32) -> Option<usize> {
@@ -217,6 +258,41 @@ unsafe fn ivlc_from_signed_terms(terms: &[SignedSchurTerm], key_len: usize) -> *
         }
     }
     lc
+}
+
+unsafe fn lrit_alloc(array_len: usize) -> *mut LrTabIter {
+    let Ok(array_len_i32) = c_int::try_from(array_len) else {
+        return ptr::null_mut();
+    };
+    let Some(size) = lrtab_iter_alloc_size(array_len) else {
+        return ptr::null_mut();
+    };
+    let lrit = unsafe { libc::malloc(size) }.cast::<LrTabIter>();
+    if lrit.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        (*lrit).cont = ptr::null_mut();
+        (*lrit).size = -1;
+        (*lrit).array_len = array_len_i32;
+    }
+    lrit
+}
+
+unsafe fn lrit_empty() -> *mut LrTabIter {
+    let lrit = unsafe { lrit_alloc(1) };
+    if lrit.is_null() {
+        return ptr::null_mut();
+    }
+    let cont = iv_new(1);
+    if cont.is_null() {
+        unsafe { libc::free(lrit.cast::<c_void>()) };
+        return ptr::null_mut();
+    }
+    unsafe {
+        (*lrit).cont = cont;
+    }
+    lrit
 }
 
 fn default_product_key_len(sh1: &[i32], sh2: &[i32], rows: c_int, partsz: c_int) -> usize {
@@ -431,6 +507,390 @@ pub unsafe extern "C" fn part_qentry(p: *const IVector, i: c_int, d: c_int, leve
     };
     let value = i64::from(values[source]) - (shifted / rows_i64) * i64::from(level) - i64::from(d);
     i32::try_from(value).unwrap_or(0)
+}
+
+/// # Safety
+///
+/// Non-null vector pointers must point to valid `IVector` allocations.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_new(
+    outer: *const IVector,
+    inner: *const IVector,
+    content: *const IVector,
+    maxrows: c_int,
+    maxcols: c_int,
+    partsz: c_int,
+) -> *mut LrTabIter {
+    if outer.is_null() {
+        return ptr::null_mut();
+    }
+    let outer_values = unsafe { ivector_values(outer) };
+    let inner_values = if inner.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(inner) }
+    };
+    let content_values = if content.is_null() {
+        &[][..]
+    } else {
+        unsafe { ivector_values(content) }
+    };
+    if !abi_valid_partition(outer_values)
+        || (!inner.is_null() && !abi_valid_partition(inner_values))
+        || (!content.is_null() && !abi_valid_partition(content_values))
+    {
+        return ptr::null_mut();
+    }
+    if !inner.is_null() && !abi_partition_leq(inner_values, outer_values) {
+        return unsafe { lrit_empty() };
+    }
+
+    let len = abi_part_length(outer_values);
+    let ilen = if inner.is_null() {
+        0
+    } else {
+        unsafe { (*inner).length as usize }.min(len)
+    };
+    let clen = if content.is_null() {
+        0
+    } else {
+        abi_part_length(content_values)
+    };
+    let out0 = if len == 0 { 0 } else { outer_values[0] };
+
+    let mut size = 0i32;
+    let mut maxdepth = match i32::try_from(clen) {
+        Ok(value) => value,
+        Err(_) => return ptr::null_mut(),
+    };
+    for row in 0..len {
+        let inn_r = if row < ilen { inner_values[row] } else { 0 };
+        let rowsz = outer_values[row] - inn_r;
+        if rowsz < 0 {
+            return unsafe { lrit_empty() };
+        }
+        size = match size.checked_add(rowsz) {
+            Some(value) => value,
+            None => return ptr::null_mut(),
+        };
+        if rowsz > 0 {
+            maxdepth += 1;
+        }
+    }
+    let mut maxrows = if maxrows < 0 || maxrows > maxdepth {
+        maxdepth
+    } else {
+        maxrows
+    };
+
+    let mut array_len = match usize::try_from(size) {
+        Ok(value) => value.saturating_add(2),
+        Err(_) => return ptr::null_mut(),
+    };
+    if maxcols >= 0 {
+        let clim = maxcols - out0;
+        let mut c1 = 0;
+        for row in (0..clen).rev() {
+            let c0 = content_values[row];
+            if c1 < c0 && c1 < maxcols && c0 > clim {
+                array_len = match array_len.checked_add(1) {
+                    Some(value) => value,
+                    None => return ptr::null_mut(),
+                };
+            }
+            c1 = c0;
+        }
+        if c1 >= maxcols {
+            array_len = array_len.saturating_sub(1);
+        }
+    }
+
+    let lrit = unsafe { lrit_alloc(array_len) };
+    if lrit.is_null() {
+        return ptr::null_mut();
+    }
+    if partsz < maxrows {
+        maxrows = maxrows.max(0);
+    }
+    let cont_len_i32 = partsz.max(maxrows);
+    let Ok(cont_len) = u32::try_from(cont_len_i32) else {
+        unsafe { libc::free(lrit.cast::<c_void>()) };
+        return ptr::null_mut();
+    };
+    let cont = iv_new(cont_len);
+    if cont.is_null() {
+        unsafe { libc::free(lrit.cast::<c_void>()) };
+        return ptr::null_mut();
+    }
+    unsafe {
+        (*lrit).cont = cont;
+        (*lrit).size = -1;
+    }
+
+    if maxrows < clen as i32 {
+        return lrit;
+    }
+    {
+        let cont_values_mut = unsafe { ivector_values_mut(cont) };
+        for row in 0..clen {
+            cont_values_mut[row] = content_values[row];
+        }
+        for value in cont_values_mut.iter_mut().skip(clen) {
+            *value = 0;
+        }
+    }
+    if maxcols >= 0 && clen > 0 && content_values[0] > maxcols {
+        return lrit;
+    }
+    if maxcols >= 0 && out0 > maxcols {
+        return lrit;
+    }
+
+    let size_usize = match usize::try_from(size) {
+        Ok(value) => value,
+        Err(_) => {
+            unsafe { lrit_free(lrit) };
+            return ptr::null_mut();
+        }
+    };
+    let array = unsafe { lrit_array_mut(lrit) };
+    let mut s = 0usize;
+    let mut out1 = 0;
+    let mut inn0 = if len == 0 {
+        out0
+    } else if len <= ilen {
+        inner_values[len - 1]
+    } else {
+        0
+    };
+    for row in (0..len).rev() {
+        let out2 = out1;
+        let inn1 = inn0;
+        out1 = outer_values[row];
+        inn0 = if row == 0 {
+            out0
+        } else if row <= ilen {
+            inner_values[row - 1]
+        } else {
+            0
+        };
+        if inn1 < out1 {
+            maxdepth -= 1;
+        }
+        for col in inn1..out1 {
+            let right = if col + 1 < out1 { s + 1 } else { array_len - 1 };
+            let above = if col >= inn0 {
+                let delta = match usize::try_from(out1 - inn0) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        unsafe { lrit_free(lrit) };
+                        return ptr::null_mut();
+                    }
+                };
+                s + delta
+            } else {
+                size_usize
+            };
+            let max = if col < out2 {
+                let source = match usize::try_from(s as i64 - i64::from(out2) + i64::from(inn1)) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        unsafe { lrit_free(lrit) };
+                        return ptr::null_mut();
+                    }
+                };
+                array[source].max - 1
+            } else {
+                maxrows - 1
+            }
+            .min(maxdepth);
+            let Ok(above) = c_int::try_from(above) else {
+                unsafe { lrit_free(lrit) };
+                return ptr::null_mut();
+            };
+            let Ok(right) = c_int::try_from(right) else {
+                unsafe { lrit_free(lrit) };
+                return ptr::null_mut();
+            };
+            array[s] = LritBox {
+                value: 0,
+                max,
+                above,
+                right,
+            };
+            s += 1;
+        }
+    }
+
+    array[array_len - 1].value = maxrows - 1;
+    array[size_usize].value = -1;
+    if maxcols >= 0 {
+        let clim = maxcols - out0;
+        let mut c1 = 0;
+        let mut extra = array_len.saturating_sub(2);
+        let mut col = out0;
+        for row in (0..clen).rev() {
+            let c0 = content_values[row];
+            if c1 < c0 && c1 < maxcols && c0 > clim {
+                array[extra].value = row as i32;
+                while col > maxcols - c0 && col > 0 {
+                    col -= 1;
+                    let index_i64 = i64::from(size) - i64::from(out0) + i64::from(col);
+                    let Ok(index) = usize::try_from(index_i64) else {
+                        unsafe { lrit_free(lrit) };
+                        return ptr::null_mut();
+                    };
+                    let Ok(extra_i32) = c_int::try_from(extra) else {
+                        unsafe { lrit_free(lrit) };
+                        return ptr::null_mut();
+                    };
+                    array[index].above = extra_i32;
+                }
+                extra = extra.saturating_sub(1);
+            }
+            c1 = c0;
+        }
+    }
+
+    for index in (0..size_usize).rev() {
+        let above = match usize::try_from(array[index].above) {
+            Ok(value) => value,
+            Err(_) => {
+                unsafe { lrit_free(lrit) };
+                return ptr::null_mut();
+            }
+        };
+        let x = array[above].value + 1;
+        if x > array[index].max {
+            return lrit;
+        }
+        array[index].value = x;
+        let Ok(x_index) = usize::try_from(x) else {
+            unsafe { lrit_free(lrit) };
+            return ptr::null_mut();
+        };
+        unsafe {
+            let cont_values_mut = ivector_values_mut(cont);
+            cont_values_mut[x_index] += 1;
+        }
+    }
+
+    unsafe {
+        (*lrit).size = size;
+    }
+    lrit
+}
+
+/// # Safety
+///
+/// `lrit` must be null or a pointer returned by `lrit_new`.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_free(lrit: *mut LrTabIter) {
+    if lrit.is_null() {
+        return;
+    }
+    unsafe {
+        iv_free((*lrit).cont);
+        libc::free(lrit.cast::<c_void>());
+    }
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_good(lrit: *const LrTabIter) -> c_int {
+    if lrit.is_null() {
+        0
+    } else if unsafe { (*lrit).size >= 0 } {
+        1
+    } else {
+        0
+    }
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_next(lrit: *mut LrTabIter) {
+    if lrit.is_null() || unsafe { (*lrit).size < 0 } {
+        return;
+    }
+    let cont = unsafe { (*lrit).cont };
+    if cont.is_null() {
+        unsafe {
+            (*lrit).size = -1;
+        }
+        return;
+    }
+
+    let size = unsafe { (*lrit).size as usize };
+    let cont_values = unsafe { ivector_values_mut(cont) };
+    let array = unsafe { lrit_array_mut(lrit) };
+    for index in 0..size {
+        let right = match usize::try_from(array[index].right) {
+            Ok(value) => value,
+            Err(_) => {
+                unsafe { (*lrit).size = -1 };
+                return;
+            }
+        };
+        let mut max = array[right].value;
+        if max > array[index].max {
+            max = array[index].max;
+        }
+        let mut x = array[index].value;
+        let Ok(x_index) = usize::try_from(x) else {
+            unsafe { (*lrit).size = -1 };
+            return;
+        };
+        cont_values[x_index] -= 1;
+        x += 1;
+        while x <= max {
+            let Ok(current) = usize::try_from(x) else {
+                unsafe { (*lrit).size = -1 };
+                return;
+            };
+            if current == 0 || cont_values[current] != cont_values[current - 1] {
+                break;
+            }
+            x += 1;
+        }
+        if x > max {
+            continue;
+        }
+
+        array[index].value = x;
+        let Ok(x_index) = usize::try_from(x) else {
+            unsafe { (*lrit).size = -1 };
+            return;
+        };
+        cont_values[x_index] += 1;
+        let mut fill = index;
+        while fill != 0 {
+            fill -= 1;
+            let above = match usize::try_from(array[fill].above) {
+                Ok(value) => value,
+                Err(_) => {
+                    unsafe { (*lrit).size = -1 };
+                    return;
+                }
+            };
+            let x = array[above].value + 1;
+            array[fill].value = x;
+            let Ok(x_index) = usize::try_from(x) else {
+                unsafe { (*lrit).size = -1 };
+                return;
+            };
+            cont_values[x_index] += 1;
+        }
+        return;
+    }
+
+    unsafe {
+        (*lrit).size = -1;
+    }
 }
 
 /// # Safety
@@ -1219,6 +1679,22 @@ mod tests {
         terms
     }
 
+    unsafe fn collect_lrit_contents(lrit: *mut LrTabIter) -> Vec<Vec<i32>> {
+        let mut contents = Vec::new();
+        unsafe {
+            while lrit_good(lrit) != 0 {
+                let mut content = ivector_values((*lrit).cont).to_vec();
+                while content.last() == Some(&0) {
+                    content.pop();
+                }
+                contents.push(content);
+                lrit_next(lrit);
+            }
+        }
+        contents.sort();
+        contents
+    }
+
     #[test]
     fn ivector_allocation_copy_hash_and_sum() {
         unsafe {
@@ -1254,6 +1730,43 @@ mod tests {
 
             iv_free(rectangle);
             iv_free(p);
+        }
+    }
+
+    #[test]
+    fn lrit_iterator_lists_small_skew_contents() {
+        unsafe {
+            let outer = vector_from_values(&[2, 1]);
+            let inner = vector_from_values(&[1]);
+            let lrit = lrit_new(outer, inner, ptr::null(), -1, -1, -1);
+            assert!(!lrit.is_null());
+            assert_eq!(collect_lrit_contents(lrit), vec![vec![1, 1], vec![2]]);
+
+            lrit_free(lrit);
+            iv_free(inner);
+            iv_free(outer);
+        }
+    }
+
+    #[test]
+    fn lrit_iterator_respects_row_bound_and_empty_shapes() {
+        unsafe {
+            let outer = vector_from_values(&[2, 1]);
+            let inner = vector_from_values(&[1]);
+            let row_lrit = lrit_new(outer, inner, ptr::null(), 1, -1, -1);
+            assert!(!row_lrit.is_null());
+            assert_eq!(collect_lrit_contents(row_lrit), vec![vec![2]]);
+            lrit_free(row_lrit);
+
+            let bad_inner = vector_from_values(&[2, 2]);
+            let empty_lrit = lrit_new(outer, bad_inner, ptr::null(), -1, -1, -1);
+            assert!(!empty_lrit.is_null());
+            assert!(collect_lrit_contents(empty_lrit).is_empty());
+            lrit_free(empty_lrit);
+
+            iv_free(bad_inner);
+            iv_free(inner);
+            iv_free(outer);
         }
     }
 

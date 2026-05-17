@@ -14,7 +14,8 @@ engines.
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
   It also exports `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
   `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
-  `part_qdegree`, and `part_qentry`.
+  `part_qdegree`, `part_qentry`, `lrit_new`, `lrit_good`, `lrit_next`, and
+  `lrit_free`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
@@ -44,7 +45,7 @@ engines.
 - CLI commands expose the coefficient engines, beta-prefix LR counts,
   diagnostic/stat modes, and ordinary upstream-style `mult`, `skew`, and
   `coprod`.  `mult -f rows,level` and `mult -q rows,level` are implemented.
-  `tab` and `schubmult` are still missing.
+  CLI `tab` and `schubmult` are still missing.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -59,7 +60,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
-111 library tests, all benchmark-bin test targets, and doc-tests.
+113 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -125,6 +126,12 @@ comparison also matched upstream on eight fusion and six quantum examples.
 three fusion symbols plus `part_qdegree` and `part_qentry` exported from
 `target/release/liblrcalc.so`.
 
+The LR tableau iterator ABI (`lrit_new`, `lrit_good`, `lrit_next`,
+`lrit_free`) was added on 2026-05-17.  Unit tests cover the small skew shape
+`(2,1)/(1)`, row-bounded iteration, and an empty non-contained skew shape.
+`nm -D` shows all four `lrit_*` symbols exported from the release shared
+library.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now
@@ -133,7 +140,8 @@ three fusion symbols plus `part_qdegree` and `part_qentry` exported from
   output accumulator.
 - Optimize fusion products by porting upstream `optim_fusion` rather than
   reducing a full row-bounded product.
-- Implement C ABI functions for LR tableau iteration and Schubert products.
+- Implement CLI `tab` on top of the LR tableau iterator.
+- Implement C ABI functions for Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.

@@ -16,7 +16,8 @@ upstream C.
   ownership cleanup functions.
 - C ABI exports for `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
   `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
-  `part_qdegree`, and `part_qentry`.
+  `part_qdegree`, `part_qentry`, `lrit_new`, `lrit_good`, `lrit_next`, and
+  `lrit_free`.
 - `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`, and
   `lrcalc coprod` CLI commands.  `mult` supports ordinary, fusion `-f`, and
   quantum-printing `-q` products.
@@ -46,7 +47,7 @@ upstream C.
 
 ## Not Yet Implemented
 
-- LR tableau iterator ABI.
+- `tab` command-line compatibility.
 - Schubert polynomial ABI and `schubmult` compatibility.
 - Installed compatibility headers.
 - Full C smoke tests and Python/Sage rebuild tests against the Rust library.
