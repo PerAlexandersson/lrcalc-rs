@@ -1,3 +1,6 @@
+use lrcalc::abi::{
+    iv_free, iv_new_zero, lrit_free, lrit_good, lrit_new, lrit_next, IVector, LrTabIter,
+};
 use lrcalc::kostka::{kostka_lr_triple, kostka_via_lr};
 use lrcalc::kostka_fast::{
     kostka_fast_stats, kostka_fast_u128, kostka_interior_stats, kostka_interior_u128,
@@ -25,6 +28,7 @@ use lrcalc::schur::{
     schur_coproduct_expansion, schur_product_expansion, schur_product_fusion_expansion,
     schur_skew_expansion, SchurExpansionError, SchurTerm, SignedSchurTerm,
 };
+use std::{ptr, slice};
 
 fn main() {
     let mut args = std::env::args();
@@ -107,6 +111,16 @@ fn main() {
                     .map_err(format_schur_error)
             }) {
                 Ok((terms, rows, cols)) => print_coproduct_terms(&terms, rows, cols),
+                Err(message) => {
+                    eprintln!("{program}: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("tab") => {
+            let rest: Vec<String> = args.collect();
+            match parse_tab_args(&rest).and_then(run_tab_command) {
+                Ok(()) => {}
                 Err(message) => {
                     eprintln!("{program}: {message}");
                     std::process::exit(2);
@@ -809,6 +823,13 @@ struct CoprodArgs {
     all: bool,
 }
 
+struct TabArgs {
+    outer: Vec<i32>,
+    inner: Vec<i32>,
+    weight: Option<Vec<i32>>,
+    rows: i32,
+}
+
 fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
     let mut rows = -1;
     let mut cols = -1;
@@ -948,6 +969,38 @@ fn parse_coprod_args(args: &[String]) -> Result<CoprodArgs, String> {
     })
 }
 
+fn parse_tab_args(args: &[String]) -> Result<TabArgs, String> {
+    let mut rows = -1;
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-r" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value after -r".to_string())?;
+                rows = parse_i32_option(value, "rows")?;
+                index += 2;
+            }
+            token => {
+                parts.push(token.to_string());
+                index += 1;
+            }
+        }
+    }
+    let parsed = parse_tab_partitions(&parts)?;
+    Ok(TabArgs {
+        outer: parsed[0].clone(),
+        inner: parsed[1].clone(),
+        weight: if parsed[2].is_empty() {
+            None
+        } else {
+            Some(parsed[2].clone())
+        },
+        rows,
+    })
+}
+
 fn parse_i32_option(value: &str, name: &str) -> Result<i32, String> {
     value
         .parse::<i32>()
@@ -1059,6 +1112,49 @@ fn parse_partition_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {
     parse_partition_pair_with_separator(args, "-", "usage: kostka-lr SHAPE - WEIGHT")
 }
 
+fn parse_tab_partitions(args: &[String]) -> Result<[Vec<i32>; 3], String> {
+    let usage = "usage: tab [-r rows] OUTER / INNER [- WEIGHT]";
+    let mut parts = [Vec::new(), Vec::new(), Vec::new()];
+    let mut section = 0usize;
+    let mut saw_slash = false;
+    let mut saw_weight = false;
+
+    for token in args {
+        if token == "/" {
+            if saw_slash || saw_weight {
+                return Err(usage.to_string());
+            }
+            saw_slash = true;
+            section = 1;
+            continue;
+        }
+        if token == "-" {
+            if !saw_slash || saw_weight {
+                return Err(usage.to_string());
+            }
+            saw_weight = true;
+            section = 2;
+            continue;
+        }
+
+        for piece in token.split(',') {
+            let piece = piece.trim_matches(|ch| matches!(ch, '(' | ')' | '[' | ']'));
+            if piece.is_empty() {
+                continue;
+            }
+            let value = piece
+                .parse::<i32>()
+                .map_err(|_| format!("invalid integer '{piece}'"))?;
+            parts[section].push(value);
+        }
+    }
+
+    if !saw_slash {
+        return Err(usage.to_string());
+    }
+    Ok(parts)
+}
+
 fn parse_partition_args(args: &[String], usage: &str) -> Result<Vec<i32>, String> {
     if args.is_empty() {
         return Err(usage.to_string());
@@ -1131,6 +1227,140 @@ fn partition_length(partition: &[i32]) -> usize {
         .iter()
         .rposition(|&part| part != 0)
         .map_or(0, |index| index + 1)
+}
+
+fn valid_cli_partition(partition: &[i32]) -> bool {
+    let mut previous = 0;
+    for &part in partition.iter().rev() {
+        if part < previous {
+            return false;
+        }
+        previous = part;
+    }
+    true
+}
+
+fn run_tab_command(parsed: TabArgs) -> Result<(), String> {
+    if !valid_cli_partition(&parsed.outer)
+        || !valid_cli_partition(&parsed.inner)
+        || parsed
+            .weight
+            .as_deref()
+            .is_some_and(|weight| !valid_cli_partition(weight))
+    {
+        return Err("invalid partition".to_string());
+    }
+
+    unsafe {
+        let outer = abi_vector_from_partition(&parsed.outer)?;
+        let inner = abi_vector_from_partition(&parsed.inner)?;
+        let lrit = lrit_new(outer, inner, ptr::null(), parsed.rows, -1, -1);
+        if lrit.is_null() {
+            iv_free(inner);
+            iv_free(outer);
+            return Err("out of memory".to_string());
+        }
+
+        while lrit_good(lrit) != 0 {
+            if parsed
+                .weight
+                .as_deref()
+                .is_none_or(|weight| tab_weight_matches(lrit, weight))
+            {
+                print_lrit_skewtab(lrit, &parsed.outer, &parsed.inner);
+                println!();
+            }
+            lrit_next(lrit);
+        }
+
+        lrit_free(lrit);
+        iv_free(inner);
+        iv_free(outer);
+    }
+    Ok(())
+}
+
+unsafe fn abi_vector_from_partition(partition: &[i32]) -> Result<*mut IVector, String> {
+    let length =
+        u32::try_from(partition.len()).map_err(|_| "partition length overflow".to_string())?;
+    let vector = iv_new_zero(length);
+    if vector.is_null() {
+        return Err("out of memory".to_string());
+    }
+    unsafe {
+        abi_vector_values_mut(vector).copy_from_slice(partition);
+    }
+    Ok(vector)
+}
+
+unsafe fn abi_vector_values_mut<'a>(vector: *mut IVector) -> &'a mut [i32] {
+    let length = unsafe { (*vector).length as usize };
+    let data = unsafe { ptr::addr_of_mut!((*vector).array).cast::<i32>() };
+    unsafe { slice::from_raw_parts_mut(data, length) }
+}
+
+unsafe fn abi_vector_values<'a>(vector: *const IVector) -> &'a [i32] {
+    let length = unsafe { (*vector).length as usize };
+    let data = unsafe { ptr::addr_of!((*vector).array).cast::<i32>() };
+    unsafe { slice::from_raw_parts(data, length) }
+}
+
+unsafe fn lrit_array<'a>(lrit: *const LrTabIter) -> &'a [lrcalc::abi::LritBox] {
+    let length = unsafe { (*lrit).array_len as usize };
+    let data = unsafe { ptr::addr_of!((*lrit).array).cast::<lrcalc::abi::LritBox>() };
+    unsafe { slice::from_raw_parts(data, length) }
+}
+
+unsafe fn tab_weight_matches(lrit: *const LrTabIter, weight: &[i32]) -> bool {
+    let content = unsafe { abi_vector_values((*lrit).cont) };
+    let weight_len = partition_length(weight);
+    if partition_length(content) != weight_len {
+        return false;
+    }
+    content
+        .iter()
+        .take(weight_len)
+        .eq(weight.iter().take(weight_len))
+}
+
+unsafe fn print_lrit_skewtab(lrit: *const LrTabIter, outer: &[i32], inner: &[i32]) {
+    let array = unsafe { lrit_array(lrit) };
+    let mut size = unsafe { (*lrit).size };
+    let ilen = inner.len();
+    let mut len = partition_length(outer);
+    if len <= ilen {
+        while len > 0 && inner.get(len - 1).copied().unwrap_or(0) == outer[len - 1] {
+            len -= 1;
+        }
+    }
+    if len == 0 {
+        return;
+    }
+
+    let col_first = if ilen < len {
+        0
+    } else {
+        inner.get(len - 1).copied().unwrap_or(0)
+    };
+    let mut row = 0usize;
+    while row < ilen && inner[row] == outer[row] {
+        row += 1;
+    }
+    while row < len {
+        let inn_r = inner.get(row).copied().unwrap_or(0);
+        let out_r = outer[row];
+        let row_size = out_r - inn_r;
+        size -= row_size;
+        for _ in col_first..inn_r {
+            print!("  ");
+        }
+        for col in 0..row_size {
+            let index = usize::try_from(size + col).unwrap_or(0);
+            print!("{:2}", array[index].value);
+        }
+        println!();
+        row += 1;
+    }
 }
 
 fn print_schur_terms(terms: &[SchurTerm], maple: bool) {

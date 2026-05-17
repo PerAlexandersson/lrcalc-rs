@@ -45,7 +45,7 @@ engines.
 - CLI commands expose the coefficient engines, beta-prefix LR counts,
   diagnostic/stat modes, and ordinary upstream-style `mult`, `skew`, and
   `coprod`.  `mult -f rows,level` and `mult -q rows,level` are implemented.
-  CLI `tab` and `schubmult` are still missing.
+  CLI `tab` is implemented.  `schubmult` is still missing.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -132,6 +132,10 @@ The LR tableau iterator ABI (`lrit_new`, `lrit_good`, `lrit_next`,
 `nm -D` shows all four `lrit_*` symbols exported from the release shared
 library.
 
+CLI `tab` was added on 2026-05-17 on top of the same `lrit_*` iterator.
+Output matched upstream exactly on five small cases, including row-bound and
+weight-filtered examples.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now
@@ -140,7 +144,6 @@ library.
   output accumulator.
 - Optimize fusion products by porting upstream `optim_fusion` rather than
   reducing a full row-bounded product.
-- Implement CLI `tab` on top of the LR tableau iterator.
 - Implement C ABI functions for Schubert products.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
