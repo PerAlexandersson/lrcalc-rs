@@ -169,6 +169,12 @@ and Schubert strings `0.25x`.  The Schubert permutation diagnostic now includes
 on tiny fixed-overhead products to `0.32x` on the S7 medium case.  This makes
 skew Schur the main remaining performance gap in the Schur/Schubert surface.
 
+Basic LR coefficient counting now uses a compact count-only tableau box with
+32-bit indices, matching upstream's 32-byte `lrcoef_box` shape more closely.
+The row-aware box remains for tableau/interior paths.  On
+`lr_gt_vs_buch_bench -- 50000 mixed`, this changed Buch full-count time from
+`0.128s` at commit `3107ad1` to `0.114s` in the working tree.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now

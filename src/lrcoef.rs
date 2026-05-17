@@ -102,6 +102,19 @@ struct LrCoefBox {
     west_sz: i32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct LrCoefCountBox {
+    value: i32,
+    max: i32,
+    north: u32,
+    east: u32,
+    se_supply: i32,
+    se_sz: i32,
+    west_sz: i32,
+    _padding: i32,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct LrCoefContent {
     cont: i32,
@@ -1649,12 +1662,12 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
     debug_assert_eq!(outer_sum, expected_outer_sum);
     debug_assert!(content_sum > 1);
 
-    let mut boxes = new_skewtab(outer, inner, part_length(content), content_sum)?;
+    let mut boxes = new_count_skewtab(outer, inner, part_length(content), content_sum)?;
     let mut counts = new_content(content);
 
     let n = content_sum;
     let mut pos = 0usize;
-    let mut above = boxes[boxes[pos].north].value;
+    let mut above = boxes[boxes[pos].north as usize].value;
     let mut x = 1i32;
     let mut se_supply = n - counts[1].supply;
     let mut coef = 0u128;
@@ -1675,7 +1688,7 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
             }
             pos -= 1;
             se_supply = boxes[pos].se_supply;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             counts[x as usize].cont -= 1;
             se_supply += counts[x as usize].supply - counts[x as usize].cont;
@@ -1685,9 +1698,9 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
             boxes[pos].value = x;
             counts[x as usize].cont += 1;
             pos += 1;
-            se_supply = boxes[boxes[pos].east].se_supply;
-            x = boxes[boxes[pos].east].value;
-            above = boxes[boxes[pos].north].value;
+            se_supply = boxes[boxes[pos].east as usize].se_supply;
+            x = boxes[boxes[pos].east as usize].value;
+            above = boxes[boxes[pos].north as usize].value;
             while x > 0 && x > boxes[pos].max {
                 se_supply += counts[x as usize].supply - counts[x as usize].cont;
                 x -= 1;
@@ -1703,7 +1716,7 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
             }
             pos -= 1;
             se_supply = boxes[pos].se_supply;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             counts[x as usize].cont -= 1;
             se_supply += counts[x as usize].supply - counts[x as usize].cont;
@@ -1715,7 +1728,7 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
 }
 
 fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
-    let mut boxes = new_skewtab(
+    let mut boxes = new_count_skewtab(
         &shape.outer,
         &shape.inner,
         shape.label_count,
@@ -1725,7 +1738,7 @@ fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
 
     let n = shape.skew_size;
     let mut pos = 0usize;
-    let mut above = boxes[boxes[pos].north].value;
+    let mut above = boxes[boxes[pos].north as usize].value;
     let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
     let mut se_supply = 0;
     let mut coef = 0u128;
@@ -1746,7 +1759,7 @@ fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
             }
             pos -= 1;
             se_supply = boxes[pos].se_supply;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             counts[x as usize].cont -= 1;
             se_supply += counts[x as usize].supply - counts[x as usize].cont;
@@ -1756,9 +1769,9 @@ fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
             boxes[pos].value = x;
             counts[x as usize].cont += 1;
             pos += 1;
-            se_supply = boxes[boxes[pos].east].se_supply;
-            x = boxes[boxes[pos].east].value;
-            above = boxes[boxes[pos].north].value;
+            se_supply = boxes[boxes[pos].east as usize].se_supply;
+            x = boxes[boxes[pos].east as usize].value;
+            above = boxes[boxes[pos].north as usize].value;
             while x > 0 && x > boxes[pos].max {
                 se_supply += counts[x as usize].supply - counts[x as usize].cont;
                 x -= 1;
@@ -1774,7 +1787,7 @@ fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
             }
             pos -= 1;
             se_supply = boxes[pos].se_supply;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             counts[x as usize].cont -= 1;
             se_supply += counts[x as usize].supply - counts[x as usize].cont;
@@ -2108,7 +2121,7 @@ fn beta_lrcoef_accumulate_content_packed(
         return Ok(ContentAccumulator::Packed(packed));
     }
 
-    let mut boxes = new_skewtab(
+    let mut boxes = new_count_skewtab(
         &shape.outer,
         &shape.inner,
         shape.label_count,
@@ -2123,7 +2136,7 @@ fn beta_lrcoef_accumulate_content_packed(
     let n = shape.skew_size;
     let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
     let mut pos = 0usize;
-    let mut above = boxes[boxes[pos].north].value;
+    let mut above = boxes[boxes[pos].north as usize].value;
     let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
 
     loop {
@@ -2139,7 +2152,7 @@ fn beta_lrcoef_accumulate_content_packed(
                 break;
             }
             pos -= 1;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             let label = x as usize;
             unplace_content_label(label, &mut total_counts, &mut content_counts);
@@ -2151,8 +2164,8 @@ fn beta_lrcoef_accumulate_content_packed(
             place_content_label_fast(label, &mut total_counts, &mut content_counts);
             packed_state.place(label);
             pos += 1;
-            x = boxes[boxes[pos].east].value;
-            above = boxes[boxes[pos].north].value;
+            x = boxes[boxes[pos].east as usize].value;
+            above = boxes[boxes[pos].north as usize].value;
         } else {
             boxes[pos].value = x;
             let label = x as usize;
@@ -2192,7 +2205,7 @@ fn beta_lrcoef_accumulate_content_vec(
         return Ok(());
     }
 
-    let mut boxes = new_skewtab(
+    let mut boxes = new_count_skewtab(
         &shape.outer,
         &shape.inner,
         shape.label_count,
@@ -2204,7 +2217,7 @@ fn beta_lrcoef_accumulate_content_vec(
     let n = shape.skew_size;
     let real_boxes = usize::try_from(n).map_err(|_| LrCoefError::ArithmeticOverflow)?;
     let mut pos = 0usize;
-    let mut above = boxes[boxes[pos].north].value;
+    let mut above = boxes[boxes[pos].north as usize].value;
     let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
 
     loop {
@@ -2220,7 +2233,7 @@ fn beta_lrcoef_accumulate_content_vec(
                 break;
             }
             pos -= 1;
-            above = boxes[boxes[pos].north].value;
+            above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             let label = x as usize;
             unplace_content_label(label, &mut total_counts, &mut content_counts);
@@ -2230,8 +2243,8 @@ fn beta_lrcoef_accumulate_content_vec(
             let label = x as usize;
             place_content_label(label, &mut total_counts, &mut content_counts)?;
             pos += 1;
-            x = boxes[boxes[pos].east].value;
-            above = boxes[boxes[pos].north].value;
+            x = boxes[boxes[pos].east as usize].value;
+            above = boxes[boxes[pos].north as usize].value;
         } else {
             boxes[pos].value = x;
             let label = x as usize;
@@ -2633,6 +2646,71 @@ fn new_skewtab(
                 se_supply: 0,
                 se_sz,
                 west_sz,
+            };
+        }
+    }
+
+    debug_assert_eq!(pos, 0);
+    array[n].value = 0;
+    array[n + 1].value = max_value;
+    array[n + 1].se_supply = 0;
+    Ok(array)
+}
+
+fn new_count_skewtab(
+    outer: &[i32],
+    inner: &[i32],
+    max_value: usize,
+    skew_size: i32,
+) -> Result<Vec<LrCoefCountBox>, LrCoefError> {
+    debug_assert!(valid_partition(outer));
+    debug_assert!(valid_partition(inner));
+    debug_assert!(outer[0] > 0);
+
+    let n = usize::try_from(skew_size).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    let max_value = i32::try_from(max_value).map_err(|_| LrCoefError::ArithmeticOverflow)?;
+    if n > u32::MAX as usize - 1 {
+        return Err(LrCoefError::ArithmeticOverflow);
+    }
+    let mut array = vec![LrCoefCountBox::default(); n + 2];
+    let mut pos = n;
+
+    for r in (0..outer.len()).rev() {
+        let nu_0 = if r == 0 { outer[0] } else { outer[r - 1] };
+        let la_0 = if r == 0 {
+            outer[0]
+        } else {
+            part_entry(inner, r - 1)
+        };
+        let nu_r = outer[r];
+        let la_r = part_entry(inner, r);
+        let nu_1 = part_entry(outer, r + 1);
+        for c in la_r..nu_r {
+            pos -= 1;
+            let north = if la_0 <= c && c < nu_0 {
+                usize::try_from(pos as i32 - nu_r + la_0)
+                    .map_err(|_| LrCoefError::ArithmeticOverflow)?
+            } else {
+                n
+            };
+            let east = if c + 1 < nu_r { pos - 1 } else { n + 1 };
+            let west_sz = c - la_r;
+            let (max, se_sz) = if c >= nu_1 {
+                (max_value, 0)
+            } else {
+                let below = usize::try_from(pos as i32 + nu_1 - la_r)
+                    .map_err(|_| LrCoefError::ArithmeticOverflow)?;
+                (array[below].max - 1, array[below].se_sz + nu_1 - c)
+            };
+            array[pos] = LrCoefCountBox {
+                value: 0,
+                max,
+                north: u32::try_from(north).map_err(|_| LrCoefError::ArithmeticOverflow)?,
+                east: u32::try_from(east).map_err(|_| LrCoefError::ArithmeticOverflow)?,
+                se_supply: 0,
+                se_sz,
+                west_sz,
+                _padding: 0,
             };
         }
     }
@@ -3155,6 +3233,12 @@ mod tests {
     use super::*;
     use crate::kostka_fast::{skew_kostka_fast_u128, skew_kostka_interior_u128};
     use crate::lr_gt::{lrcoef_gt_dimension, lrcoef_gt_interior_dfs_u128};
+
+    #[test]
+    fn count_box_keeps_upstream_sized_layout() {
+        assert_eq!(std::mem::size_of::<LrCoefCountBox>(), 32);
+        assert!(std::mem::size_of::<LrCoefCountBox>() < std::mem::size_of::<LrCoefBox>());
+    }
 
     #[test]
     fn computes_basic_coefficients() {
