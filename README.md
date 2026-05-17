@@ -12,6 +12,15 @@ several independent LR/Kostka counting engines, Ehrhart interpolation
 experiments for stretched LR coefficients, and benchmark harnesses against
 upstream C.
 
+## Mathematical Background
+
+For background on the main objects computed by this project, see SymCat:
+
+- [Schur polynomials](https://www.symmetricfunctions.com/schur.htm)
+- [Littlewood--Richardson coefficients](https://www.symmetricfunctions.com/littlewoodRichardson.htm)
+- [Kostka coefficients and Kostka--Foulkes polynomials](https://www.symmetricfunctions.com/kostkaFoulkes.htm)
+- [Schubert polynomials](https://www.symmetricfunctions.com/schubert.htm)
+
 ## Implemented
 
 - `liblrcalc` library target configured as `cdylib`, `staticlib`, and `rlib`.
