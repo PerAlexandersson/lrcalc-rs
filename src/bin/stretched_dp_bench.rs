@@ -30,74 +30,189 @@ struct CaseStats {
     hybrid: LrHybridCountsStats,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OutputFormat {
+    Plain,
+    Markdown,
+}
+
+struct BenchResult {
+    repeat: usize,
+    max_scale: i32,
+    kostka_time: Duration,
+    lr_time: Duration,
+    hybrid_time: Duration,
+    cases: Vec<CaseReport>,
+}
+
+struct CaseReport {
+    label: String,
+    full: u128,
+    interior: u128,
+    k_full_peak: usize,
+    k_interior_peak: usize,
+    lr_full_peak: usize,
+    lr_interior_peak: usize,
+    hybrid_mode: &'static str,
+    hybrid_full_peak: usize,
+    hybrid_interior_peak: usize,
+}
+
 fn main() {
-    let mut repeat = 5usize;
-    let mut max_scale = 3i32;
-    let mut args = std::env::args().skip(1);
-    if let Some(arg) = args.next() {
-        repeat = arg
-            .parse::<usize>()
-            .unwrap_or_else(|_| panic!("expected integer repeat count, got {arg}"));
-    }
-    if let Some(arg) = args.next() {
-        max_scale = arg
-            .parse::<i32>()
-            .unwrap_or_else(|_| panic!("expected integer max scale, got {arg}"));
-    }
+    let (repeat, max_scale, format) = parse_options();
     assert!(repeat > 0, "repeat must be positive");
     assert!(max_scale > 0, "max scale must be positive");
 
     let cases = scaled_cases(max_scale);
-    println!("suite: stretched_dp_bench");
-    println!("repeat: {repeat}");
-    println!("max_scale: {max_scale}");
     verify_cases(&cases);
-    print_case_stats(&cases);
+    let result = run_benchmark(repeat, max_scale, &cases);
+    match format {
+        OutputFormat::Plain => print_plain_result(&result),
+        OutputFormat::Markdown => print_markdown_result(&result),
+    }
+}
 
-    let (kostka_time, kostka_sink) = time_loop(repeat, &cases, |case| {
+fn parse_options() -> (usize, i32, OutputFormat) {
+    let mut repeat = 5usize;
+    let mut max_scale = 3i32;
+    let mut format = OutputFormat::Plain;
+    let mut positional = Vec::new();
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--markdown" | "-m" => format = OutputFormat::Markdown,
+            "--plain" => format = OutputFormat::Plain,
+            "--help" | "-h" => {
+                println!("usage: stretched_dp_bench [--markdown] [repeat] [max-scale]");
+                std::process::exit(0);
+            }
+            _ => positional.push(arg),
+        }
+    }
+    if let Some(arg) = positional.first() {
+        repeat = arg
+            .parse::<usize>()
+            .unwrap_or_else(|_| panic!("expected integer repeat count, got {arg}"));
+    }
+    if let Some(arg) = positional.get(1) {
+        max_scale = arg
+            .parse::<i32>()
+            .unwrap_or_else(|_| panic!("expected integer max scale, got {arg}"));
+    }
+    (repeat, max_scale, format)
+}
+
+fn run_benchmark(repeat: usize, max_scale: i32, cases: &[ScaledCase]) -> BenchResult {
+    let reports = case_reports(cases);
+
+    let (kostka_time, kostka_sink) = time_loop(repeat, cases, |case| {
         let stats = kostka_counts_stats(&case.shape, &case.weight)
             .unwrap_or_else(|_| panic!("Kostka counts failed for {}", case.label));
         stats.full ^ stats.interior
     });
-    let (lr_time, lr_sink) = time_loop(repeat, &cases, |case| {
+    let (lr_time, lr_sink) = time_loop(repeat, cases, |case| {
         let stats = lrcoef_gt_counts_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("LR GT counts failed for {}", case.label));
         stats.full ^ stats.interior
     });
-    let (hybrid_time, hybrid_sink) = time_loop(repeat, &cases, |case| {
+    let (hybrid_time, hybrid_sink) = time_loop(repeat, cases, |case| {
         let stats = lrcoef_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("hybrid LR counts failed for {}", case.label));
         stats.counts.full ^ stats.counts.interior
     });
     black_box((kostka_sink, lr_sink, hybrid_sink));
 
+    BenchResult {
+        repeat,
+        max_scale,
+        kostka_time,
+        lr_time,
+        hybrid_time,
+        cases: reports,
+    }
+}
+
+fn print_plain_result(result: &BenchResult) {
+    println!("suite: stretched_dp_bench");
+    println!("repeat: {}", result.repeat);
+    println!("max_scale: {}", result.max_scale);
+    println!("correctness: ok ({} scaled cases)", result.cases.len());
+    print_case_report_table(&result.cases);
+
     println!(
         "Kostka DP counts: {}  ({} evals)",
-        format_duration(kostka_time),
-        repeat * cases.len()
+        format_duration(result.kostka_time),
+        result.evals()
     );
     println!(
         "LR GT DP counts:  {}  ({} evals)",
-        format_duration(lr_time),
-        repeat * cases.len()
+        format_duration(result.lr_time),
+        result.evals()
     );
     println!(
         "Hybrid LR counts: {}  ({} evals)",
-        format_duration(hybrid_time),
-        repeat * cases.len()
+        format_duration(result.hybrid_time),
+        result.evals()
     );
-    println!(
-        "comparison: LR/Kostka = {:.3}x",
-        lr_time.as_secs_f64() / kostka_time.as_secs_f64()
-    );
+    println!("comparison: LR/Kostka = {:.3}x", result.lr_vs_kostka());
     println!(
         "comparison: hybrid/Kostka = {:.3}x",
-        hybrid_time.as_secs_f64() / kostka_time.as_secs_f64()
+        result.hybrid_vs_kostka()
+    );
+    println!("comparison: LR/hybrid = {:.3}x", result.lr_vs_hybrid());
+}
+
+fn print_markdown_result(result: &BenchResult) {
+    println!("## `stretched_dp_bench`: stretched Kostka-as-LR counts");
+    println!();
+    println!("| Field | Value |");
+    println!("|---|---:|");
+    println!("| Repeat | `{}` |", result.repeat);
+    println!("| Max scale | `{}` |", result.max_scale);
+    println!("| Scaled cases | `{}` |", result.cases.len());
+    println!("| Total evaluations per method | `{}` |", result.evals());
+    println!("| Correctness | `ok` |");
+    println!();
+    println!("| Metric | Kostka DP | LR GT-chain DP | Hybrid LR |");
+    println!("|---|---:|---:|---:|");
+    println!(
+        "| Total wall time | `{}` | `{}` | `{}` |",
+        format_duration(result.kostka_time),
+        format_duration(result.lr_time),
+        format_duration(result.hybrid_time)
+    );
+    println!();
+    println!("| Ratio | Value |");
+    println!("|---|---:|");
+    println!(
+        "| LR GT-chain / Kostka DP | `{:.3}x` |",
+        result.lr_vs_kostka()
     );
     println!(
-        "comparison: LR/hybrid = {:.3}x",
-        lr_time.as_secs_f64() / hybrid_time.as_secs_f64()
+        "| Hybrid LR / Kostka DP | `{:.3}x` |",
+        result.hybrid_vs_kostka()
     );
+    println!(
+        "| LR GT-chain / Hybrid LR | `{:.3}x` |",
+        result.lr_vs_hybrid()
+    );
+    println!();
+    println!("| Case | Full | Interior | Kostka full peak | Kostka interior peak | LR full peak | LR interior peak | Hybrid mode | Hybrid full peak | Hybrid interior peak |");
+    println!("|---|---:|---:|---:|---:|---:|---:|---|---:|---:|");
+    for case in &result.cases {
+        println!(
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |",
+            markdown_cell(&case.label),
+            case.full,
+            case.interior,
+            case.k_full_peak,
+            case.k_interior_peak,
+            case.lr_full_peak,
+            case.lr_interior_peak,
+            case.hybrid_mode,
+            case.hybrid_full_peak,
+            case.hybrid_interior_peak
+        );
+    }
 }
 
 fn scaled_cases(max_scale: i32) -> Vec<ScaledCase> {
@@ -149,16 +264,48 @@ fn verify_cases(cases: &[ScaledCase]) {
             case.label
         );
     }
-    println!("correctness: ok ({} scaled cases)", cases.len());
 }
 
-fn print_case_stats(cases: &[ScaledCase]) {
+fn print_case_report_table(cases: &[CaseReport]) {
     println!(
         "case\tfull\tinterior\tk_full_peak\tk_int_peak\tlr_full_peak\tlr_int_peak\thybrid_mode\thybrid_full_peak\thybrid_int_peak"
     );
     for case in cases {
-        print_stats(case, &case_stats(case));
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            case.label,
+            case.full,
+            case.interior,
+            case.k_full_peak,
+            case.k_interior_peak,
+            case.lr_full_peak,
+            case.lr_interior_peak,
+            case.hybrid_mode,
+            case.hybrid_full_peak,
+            case.hybrid_interior_peak
+        );
     }
+}
+
+fn case_reports(cases: &[ScaledCase]) -> Vec<CaseReport> {
+    cases
+        .iter()
+        .map(|case| {
+            let stats = case_stats(case);
+            CaseReport {
+                label: case.label.clone(),
+                full: stats.kostka.full,
+                interior: stats.kostka.interior,
+                k_full_peak: stats.kostka.full_peak_states,
+                k_interior_peak: stats.kostka.interior_peak_states,
+                lr_full_peak: stats.lr.full_peak_states,
+                lr_interior_peak: stats.lr.interior_peak_states,
+                hybrid_mode: stats.hybrid.mode.label(),
+                hybrid_full_peak: stats.hybrid.counts.full_peak_states,
+                hybrid_interior_peak: stats.hybrid.counts.interior_peak_states,
+            }
+        })
+        .collect()
 }
 
 fn case_stats(case: &ScaledCase) -> CaseStats {
@@ -170,22 +317,6 @@ fn case_stats(case: &ScaledCase) -> CaseStats {
         hybrid: lrcoef_hybrid_counts_stats(&case.outer, &case.inner, &case.content)
             .unwrap_or_else(|_| panic!("hybrid LR counts failed for {}", case.label)),
     }
-}
-
-fn print_stats(case: &ScaledCase, stats: &CaseStats) {
-    println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        case.label,
-        stats.kostka.full,
-        stats.kostka.interior,
-        stats.kostka.full_peak_states,
-        stats.kostka.interior_peak_states,
-        stats.lr.full_peak_states,
-        stats.lr.interior_peak_states,
-        stats.hybrid.mode.label(),
-        stats.hybrid.counts.full_peak_states,
-        stats.hybrid.counts.interior_peak_states
-    );
 }
 
 fn time_loop<F>(repeat: usize, cases: &[ScaledCase], mut f: F) -> (Duration, u128)
@@ -207,7 +338,36 @@ fn scale_parts(parts: &[i32], scale: i32) -> Vec<i32> {
 }
 
 fn format_duration(duration: Duration) -> String {
-    format!("{:.6}s", duration.as_secs_f64())
+    let seconds = duration.as_secs_f64();
+    if seconds >= 1.0 {
+        format!("{seconds:.3}s")
+    } else if seconds >= 0.001 {
+        format!("{:.3}ms", seconds * 1_000.0)
+    } else {
+        format!("{:.3}us", seconds * 1_000_000.0)
+    }
+}
+
+impl BenchResult {
+    fn evals(&self) -> usize {
+        self.repeat * self.cases.len()
+    }
+
+    fn lr_vs_kostka(&self) -> f64 {
+        self.lr_time.as_secs_f64() / self.kostka_time.as_secs_f64()
+    }
+
+    fn hybrid_vs_kostka(&self) -> f64 {
+        self.hybrid_time.as_secs_f64() / self.kostka_time.as_secs_f64()
+    }
+
+    fn lr_vs_hybrid(&self) -> f64 {
+        self.lr_time.as_secs_f64() / self.hybrid_time.as_secs_f64()
+    }
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 const BASE_CASES: &[BaseCase] = &[
