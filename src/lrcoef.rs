@@ -178,8 +178,13 @@ pub fn lrcoef(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Result<u128, LrC
 
 /// Compute a single coefficient and downcast to the upstream ABI return type.
 pub fn lrcoef_i64(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Option<i64> {
-    let coef = lrcoef(outer, inner1, inner2).ok()?;
-    i64::try_from(coef).ok()
+    match optim_coef(outer, inner1, inner2).ok()? {
+        OptimizedCoef::Zero => Some(0),
+        OptimizedCoef::One => Some(1),
+        OptimizedCoef::Count(shape) => {
+            lrcoef_count_i64(&shape.outer, &shape.inner, &shape.content).ok()
+        }
+    }
 }
 
 /// Count semistandard fillings whose reading word is Yamanouchi after a
@@ -1727,6 +1732,78 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
     Ok(coef)
 }
 
+fn lrcoef_count_i64(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<i64, LrCoefError> {
+    let content_sum = part_sum(content)?;
+    debug_assert!(content_sum > 1);
+
+    let mut boxes = new_count_skewtab(outer, inner, part_length(content), content_sum)?;
+    let mut counts = new_content(content);
+
+    let n = content_sum;
+    let mut pos = 0usize;
+    let mut above = boxes[boxes[pos].north as usize].value;
+    let mut x = 1i32;
+    let mut se_supply = n - counts[1].supply;
+    let mut coef = 0i64;
+
+    loop {
+        while x > 0
+            && x > above
+            && (counts[x as usize].cont == counts[x as usize].supply
+                || counts[x as usize].cont == counts[(x - 1) as usize].cont)
+        {
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+
+        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north as usize].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        } else if pos + 1 < n as usize {
+            boxes[pos].se_supply = se_supply;
+            boxes[pos].value = x;
+            counts[x as usize].cont += 1;
+            pos += 1;
+            se_supply = boxes[boxes[pos].east as usize].se_supply;
+            x = boxes[boxes[pos].east as usize].value;
+            above = boxes[boxes[pos].north as usize].value;
+            while x > 0 && x > boxes[pos].max {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+            while x > 0 && x > above && se_supply < boxes[pos].se_sz {
+                se_supply += counts[x as usize].supply - counts[x as usize].cont;
+                x -= 1;
+            }
+        } else {
+            if coef == i64::MAX {
+                return Err(LrCoefError::ArithmeticOverflow);
+            }
+            coef += 1;
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+            se_supply = boxes[pos].se_supply;
+            above = boxes[boxes[pos].north as usize].value;
+            x = boxes[pos].value;
+            counts[x as usize].cont -= 1;
+            se_supply += counts[x as usize].supply - counts[x as usize].cont;
+            x -= 1;
+        }
+    }
+
+    Ok(coef)
+}
+
 fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
     let mut boxes = new_count_skewtab(
         &shape.outer,
@@ -3247,6 +3324,30 @@ mod tests {
         assert_eq!(lrcoef(&[3, 2, 1], &[2, 1], &[2, 1]), Ok(2));
         assert_eq!(lrcoef(&[4, 2], &[2, 1], &[2, 1]), Ok(1));
         assert_eq!(lrcoef(&[5, 1], &[2, 1], &[2, 1]), Ok(0));
+    }
+
+    #[test]
+    fn i64_fast_path_matches_public_lrcoef() {
+        let cases = [
+            (&[][..], &[][..], &[][..]),
+            (&[2, 1][..], &[2][..], &[1][..]),
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..]),
+            (&[4, 2][..], &[2, 1][..], &[2, 1][..]),
+            (&[5, 1][..], &[2, 1][..], &[2, 1][..]),
+            (
+                &[7, 6, 5, 4, 3, 2, 1][..],
+                &[4, 4, 3, 2, 1][..],
+                &[5, 4, 3, 2][..],
+            ),
+        ];
+        for (outer, inner, content) in cases {
+            assert_eq!(
+                lrcoef_i64(outer, inner, content).map(i128::from),
+                lrcoef(outer, inner, content).unwrap().try_into().ok()
+            );
+        }
+        assert_eq!(lrcoef_i64(&[1], &[2], &[1]), Some(0));
+        assert_eq!(lrcoef_i64(&[1, 2], &[], &[3]), None);
     }
 
     #[test]

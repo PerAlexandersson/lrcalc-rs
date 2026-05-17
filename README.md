@@ -83,6 +83,7 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-hvector 5 3 1 -
 timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
+timeout 60s nice -n 10 scripts/lrcoef_ffi_bench.sh 5000 mixed
 timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000
 timeout 60s nice -n 10 scripts/schur_schubert_ffi_bench.sh 500
 ```
@@ -99,6 +100,12 @@ interior counts.
 
 Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
 about `180x` faster than an upstream-C repeated Schur multiplication baseline.
+
+Current `lrcoef_ffi_bench.sh 5000 mixed` result: the Rust `lrcoef_i64` ABI path
+matches upstream C on 24 mixed LR cases and takes `1.33x` upstream C time
+overall.  Count-heavy nonzero cases are typically around `1.27x`--`1.35x`;
+zero and early-exit cases are closer to `1.6x`, which points to setup and
+normalization overhead as the next gap.
 
 Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
 fusion are near upstream C parity (`1.07x`, `0.80x`, and `1.09x`

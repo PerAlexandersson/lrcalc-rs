@@ -173,7 +173,14 @@ Basic LR coefficient counting now uses a compact count-only tableau box with
 32-bit indices, matching upstream's 32-byte `lrcoef_box` shape more closely.
 The row-aware box remains for tableau/interior paths.  On
 `lr_gt_vs_buch_bench -- 50000 mixed`, this changed Buch full-count time from
-`0.128s` at commit `3107ad1` to `0.114s` in the working tree.
+`0.128s` at commit `3107ad1` to `0.114s` after commit `af87dd4`.
+
+`scripts/lrcoef_ffi_bench.sh 5000 mixed` compares the Rust `lrcoef_i64` ABI path
+directly against upstream C `schur_lrcoef` through `dlopen`.  It passed on
+2026-05-17 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`; current
+overall Rust/upstream C ratio is `1.33x` on 24 mixed cases.  Per-case
+diagnostics show count-heavy nonzero cases near `1.27x`--`1.35x`, while
+zero/early-exit cases are usually about `1.6x`.
 
 ## Main Gaps
 
