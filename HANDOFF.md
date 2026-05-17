@@ -158,6 +158,15 @@ Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic;
 stable Rust cannot define true variadic exports, so the current symbols are
 fixed-argument compatibility shims covering the first eight initializer values.
 
+`scripts/schur_schubert_ffi_bench.sh 500` was added and passed on 2026-05-17
+against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  It verifies and times
+Schur product, skew Schur, coproduct, fusion product, Schubert permutation
+products, and Schubert string products in-process through upstream C FFI.
+Current ratios, reported as Rust/upstream C, were: product `1.16x`, skew
+`5.38x`, coproduct `0.89x`, fusion `1.02x`, Schubert permutations `0.079x`,
+and Schubert strings `0.124x`.  This makes skew Schur the main remaining
+performance gap in the Schur/Schubert surface.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now

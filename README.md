@@ -84,6 +84,7 @@ timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
 timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
 timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000
+timeout 60s nice -n 10 scripts/schur_schubert_ffi_bench.sh 500
 ```
 
 Current `lr_hybrid_bench -- 5 3` result: the production tableau full-count
@@ -98,6 +99,12 @@ interior counts.
 
 Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
 about `180x` faster than an upstream-C repeated Schur multiplication baseline.
+
+Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
+fusion are near upstream C parity (`1.16x`, `0.89x`, and `1.02x`
+Rust/upstream respectively), skew Schur is slower on the included optimized
+skew cases (`5.38x`), and Schubert multiplication is faster in Rust
+(`0.079x` for permutations and `0.124x` for strings).
 
 Current optimized skew expansion snapshot: on
 `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both take about
