@@ -179,10 +179,10 @@ The row-aware box remains for tableau/interior paths.  On
 directly against upstream C `schur_lrcoef` through `dlopen`.  After adding the
 native C count kernel, it passed on 2026-05-17 against
 `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`; current overall Rust/upstream C
-ratio is `1.17x` on 24 mixed cases.  The larger count-heavy cases are near
-parity (`1.02x`--`1.09x`), while zero/early-exit cases are usually about
+ratio is `1.10x` on 24 mixed cases.  The larger count-heavy cases are near
+parity (`1.00x`--`1.09x`), while zero/early-exit cases are usually about
 `1.5x`--`1.7x`.  On `scripts/lrcoef_ffi_bench.sh 5000 large-few-parts`, Rust is
-slightly faster overall at `0.99x` upstream C.
+slightly faster overall at `0.95x` upstream C.
 
 ## Main Gaps
 

@@ -19,7 +19,7 @@ typedef struct {
   int32_t supply;
 } lrcoef_content;
 
-static int32_t part_entry(const int32_t *part, uintptr_t len, uintptr_t index)
+static inline int32_t part_entry(const int32_t *part, uintptr_t len, uintptr_t index)
 {
   return (index < len) ? part[index] : 0;
 }
@@ -29,14 +29,16 @@ static lrcoef_content *new_content(const int32_t *content, uintptr_t content_len
   lrcoef_content *counts;
   uintptr_t i;
 
-  counts = (lrcoef_content *)calloc(content_len + 1, sizeof(lrcoef_content));
+  counts = (lrcoef_content *)malloc((content_len + 1) * sizeof(lrcoef_content));
   if (counts == NULL)
     return NULL;
 
   counts[0].cont = content[0];
   counts[0].supply = content[0];
-  for (i = 0; i < content_len; i++)
+  for (i = 0; i < content_len; i++) {
+    counts[i + 1].cont = 0;
     counts[i + 1].supply = content[i];
+  }
 
   return counts;
 }
@@ -50,20 +52,21 @@ static lrcoef_box *new_skewtab(
     int32_t skew_size)
 {
   lrcoef_box *array;
-  uintptr_t n, pos, rr;
+  uintptr_t n;
+  int32_t pos, rr;
 
-  if (skew_size < 0)
+  if (skew_size < 0 || outer_len > (uintptr_t)INT32_MAX)
     return NULL;
   n = (uintptr_t)skew_size;
   if (n > (UINTPTR_MAX / sizeof(lrcoef_box)) - 2)
     return NULL;
 
-  array = (lrcoef_box *)calloc(n + 2, sizeof(lrcoef_box));
+  array = (lrcoef_box *)malloc((n + 2) * sizeof(lrcoef_box));
   if (array == NULL)
     return NULL;
 
-  pos = n;
-  for (rr = outer_len; rr-- > 0;) {
+  pos = skew_size;
+  for (rr = (int32_t)outer_len; rr-- > 0;) {
     int32_t nu_0 = (rr == 0) ? outer[0] : outer[rr - 1];
     int32_t la_0 = (rr == 0) ? outer[0] : part_entry(inner, inner_len, rr - 1);
     int32_t nu_r = outer[rr];
@@ -73,8 +76,8 @@ static lrcoef_box *new_skewtab(
 
     for (c = la_r; c < nu_r; c++) {
       lrcoef_box *box;
-      uintptr_t north;
-      uintptr_t east;
+      int32_t north;
+      int32_t east;
       int32_t west_sz;
 
       if (pos == 0) {
@@ -85,41 +88,23 @@ static lrcoef_box *new_skewtab(
       box = array + pos;
 
       if (la_0 <= c && c < nu_0) {
-        int64_t north_signed = (int64_t)pos - (int64_t)nu_r + (int64_t)la_0;
-        if (north_signed < 0 || north_signed > INT32_MAX) {
-          free(array);
-          return NULL;
-        }
-        north = (uintptr_t)north_signed;
+        north = pos - nu_r + la_0;
       } else {
-        north = n;
+        north = skew_size;
       }
 
-      east = (c + 1 < nu_r) ? pos - 1 : n + 1;
-      if (north > (uintptr_t)INT32_MAX || east > (uintptr_t)INT32_MAX) {
-        free(array);
-        return NULL;
-      }
+      east = (c + 1 < nu_r) ? pos - 1 : skew_size + 1;
 
       west_sz = c - la_r;
-      box->value = 0;
-      box->north = (int32_t)north;
-      box->east = (int32_t)east;
-      box->se_supply = 0;
+      box->north = north;
+      box->east = east;
       box->west_sz = west_sz;
-      box->padding = 0;
 
       if (c >= nu_1) {
         box->max = max_value;
         box->se_sz = 0;
       } else {
-        int64_t below_signed = (int64_t)pos + (int64_t)nu_1 - (int64_t)la_r;
-        uintptr_t below;
-        if (below_signed < 0 || below_signed > (int64_t)(n + 1)) {
-          free(array);
-          return NULL;
-        }
-        below = (uintptr_t)below_signed;
+        int32_t below = pos + nu_1 - la_r;
         box->max = array[below].max - 1;
         box->se_sz = array[below].se_sz + nu_1 - c;
       }
@@ -159,6 +144,8 @@ int64_t lrcalc_native_lrcoef_count_i64(
   if (outer == NULL || content == NULL || outer_len == 0 || content_len == 0)
     return -1;
   if (content_len > (uintptr_t)INT32_MAX)
+    return -1;
+  if (content_sum < 0)
     return -1;
 
   T = new_skewtab(outer, outer_len, inner, inner_len, (int32_t)content_len, content_sum);
