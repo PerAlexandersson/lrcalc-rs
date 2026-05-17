@@ -101,10 +101,11 @@ Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
 about `180x` faster than an upstream-C repeated Schur multiplication baseline.
 
 Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
-fusion are near upstream C parity (`1.16x`, `0.89x`, and `1.02x`
+fusion are near upstream C parity (`1.07x`, `0.80x`, and `1.09x`
 Rust/upstream respectively), skew Schur is slower on the included optimized
-skew cases (`5.38x`), and Schubert multiplication is faster in Rust
-(`0.079x` for permutations and `0.124x` for strings).
+skew cases (`5.34x`).  On the broader Schubert diagnostic suite, Rust is faster
+overall (`0.29x` for permutations and `0.25x` for strings), with the advantage
+narrowing from tiny fixed-overhead cases to the larger S6/S7 examples.
 
 Current optimized skew expansion snapshot: on
 `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both take about

@@ -162,10 +162,12 @@ fixed-argument compatibility shims covering the first eight initializer values.
 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  It verifies and times
 Schur product, skew Schur, coproduct, fusion product, Schubert permutation
 products, and Schubert string products in-process through upstream C FFI.
-Current ratios, reported as Rust/upstream C, were: product `1.16x`, skew
-`5.38x`, coproduct `0.89x`, fusion `1.02x`, Schubert permutations `0.079x`,
-and Schubert strings `0.124x`.  This makes skew Schur the main remaining
-performance gap in the Schur/Schubert surface.
+Current ratios, reported as Rust/upstream C, were: product `1.07x`, skew
+`5.34x`, coproduct `0.80x`, fusion `1.09x`, Schubert permutations `0.29x`,
+and Schubert strings `0.25x`.  The Schubert permutation diagnostic now includes
+18 cases up to a selected S7 product; Rust ranges from about `0.04x`--`0.10x`
+on tiny fixed-overhead products to `0.32x` on the S7 medium case.  This makes
+skew Schur the main remaining performance gap in the Schur/Schubert surface.
 
 ## Main Gaps
 

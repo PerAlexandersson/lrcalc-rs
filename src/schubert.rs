@@ -480,6 +480,10 @@ mod tests {
         out.into_iter().collect()
     }
 
+    fn abs_coeff_sum(out: &LinearCombination) -> i32 {
+        out.values().map(|coefficient| coefficient.abs()).sum()
+    }
+
     #[test]
     fn computes_basic_transitions() {
         assert_eq!(
@@ -513,10 +517,35 @@ mod tests {
     }
 
     #[test]
+    fn multiplies_nontrivial_schubert_products() {
+        assert_eq!(
+            terms(multiply_schubert(&[2, 1, 3], &[1, 3, 2], 0).unwrap()),
+            vec![(vec![2, 3, 1], 1), (vec![3, 1, 2], 1)]
+        );
+        assert_eq!(
+            terms(multiply_schubert(&[2, 4, 1, 3], &[3, 1, 4, 2], 0).unwrap()),
+            vec![
+                (vec![4, 3, 2, 1], 1),
+                (vec![4, 5, 1, 2, 3], 1),
+                (vec![5, 2, 3, 1, 4], 1),
+                (vec![5, 3, 1, 2, 4], 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn rank_bound_can_zero_schubert_product() {
+        assert!(multiply_schubert(&[2, 1], &[2, 1], 2).unwrap().is_empty());
+    }
+
+    #[test]
     fn multiplies_compatible_strings() {
         assert_eq!(
             terms(multiply_schubert_strings(&[0, 1], &[1, 0]).unwrap()),
             vec![(vec![1, 0], 1)]
         );
+        let mixed = multiply_schubert_strings(&[0, 2, 1, 0, 2, 1], &[1, 0, 2, 1, 0, 2]).unwrap();
+        assert_eq!(mixed.len(), 5);
+        assert_eq!(abs_coeff_sum(&mixed), 6);
     }
 }

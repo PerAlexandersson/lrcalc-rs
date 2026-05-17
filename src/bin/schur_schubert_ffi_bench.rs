@@ -205,6 +205,46 @@ struct SchubertStringCase {
     c_right: OwnedCVector,
 }
 
+trait BenchCase {
+    fn label(&self) -> &str;
+}
+
+impl BenchCase for ProductCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
+impl BenchCase for SkewCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
+impl BenchCase for CoprodCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
+impl BenchCase for FusionCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
+impl BenchCase for SchubertCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
+impl BenchCase for SchubertStringCase {
+    fn label(&self) -> &str {
+        self.label
+    }
+}
+
 fn main() {
     let repeat = std::env::args()
         .nth(1)
@@ -251,6 +291,7 @@ fn main() {
                 KeyMode::TrimPartition,
             )
         },
+        false,
     );
 
     run_suite(
@@ -275,6 +316,7 @@ fn main() {
                 KeyMode::TrimPartition,
             )
         },
+        false,
     );
 
     run_suite(
@@ -301,6 +343,7 @@ fn main() {
                 KeyMode::TrimPartition,
             )
         },
+        false,
     );
 
     run_suite(
@@ -326,6 +369,7 @@ fn main() {
                 KeyMode::TrimPartition,
             )
         },
+        false,
     );
 
     run_suite(
@@ -349,6 +393,7 @@ fn main() {
                 KeyMode::Exact,
             )
         },
+        true,
     );
 
     run_suite(
@@ -368,6 +413,7 @@ fn main() {
                 KeyMode::Exact,
             )
         },
+        true,
     );
 }
 
@@ -378,7 +424,9 @@ fn run_suite<C, FRust, FC>(
     mode: KeyMode,
     mut rust_eval: FRust,
     mut c_eval: FC,
+    detail: bool,
 ) where
+    C: BenchCase,
     FRust: FnMut(&C) -> Terms,
     FC: FnMut(&C) -> Terms,
 {
@@ -386,7 +434,7 @@ fn run_suite<C, FRust, FC>(
         let rust_terms = normalize_terms(rust_eval(case), mode);
         let c_terms = normalize_terms(c_eval(case), mode);
         if rust_terms != c_terms {
-            eprintln!("{name}: mismatch");
+            eprintln!("{name}: mismatch in {}", case.label());
             eprintln!("rust: {rust_terms:?}");
             eprintln!("C:    {c_terms:?}");
             std::process::exit(1);
@@ -416,6 +464,52 @@ fn run_suite<C, FRust, FC>(
         "  ratio Rust/C: {:.3}x",
         rust_time.as_secs_f64() / c_time.as_secs_f64()
     );
+
+    if detail {
+        print_case_diagnostics(name, repeat, cases, mode, rust_eval, c_eval);
+    }
+}
+
+fn print_case_diagnostics<C, FRust, FC>(
+    name: &str,
+    repeat: usize,
+    cases: &[C],
+    mode: KeyMode,
+    mut rust_eval: FRust,
+    mut c_eval: FC,
+) where
+    C: BenchCase,
+    FRust: FnMut(&C) -> Terms,
+    FC: FnMut(&C) -> Terms,
+{
+    println!("  {name} per-case diagnostics:");
+    println!(
+        "    {:<24} {:>6} {:>7} {:>9} {:>9} {:>9} {:>8}",
+        "case", "terms", "keylen", "abscoef", "Rust", "C", "Rust/C"
+    );
+    for case in cases {
+        let terms = normalize_terms(rust_eval(case), mode);
+        let term_count = terms.len();
+        let max_key_len = terms.iter().map(|(key, _)| key.len()).max().unwrap_or(0);
+        let abs_coeff_sum: i128 = terms.iter().map(|(_, coefficient)| coefficient.abs()).sum();
+        let (rust_time, rust_sink) = time_one(repeat, case, |case| {
+            checksum(&normalize_terms(rust_eval(case), mode))
+        });
+        let (c_time, c_sink) = time_one(repeat, case, |case| {
+            checksum(&normalize_terms(c_eval(case), mode))
+        });
+        black_box((rust_sink, c_sink));
+        println!(
+            "    {:<24} {:>6} {:>7} {:>9} {:>9} {:>9} {:>8.3}x",
+            truncate_label(case.label(), 24),
+            term_count,
+            max_key_len,
+            abs_coeff_sum,
+            format_duration(rust_time),
+            format_duration(c_time),
+            rust_time.as_secs_f64() / c_time.as_secs_f64()
+        );
+    }
 }
 
 fn time_loop<C, F>(repeat: usize, cases: &[C], mut f: F) -> (Duration, u64)
@@ -430,6 +524,28 @@ where
         }
     }
     (start.elapsed(), sink)
+}
+
+fn time_one<C, F>(repeat: usize, case: &C, mut f: F) -> (Duration, u64)
+where
+    F: FnMut(&C) -> u64,
+{
+    let start = Instant::now();
+    let mut sink = 0u64;
+    for _ in 0..repeat {
+        sink ^= black_box(f(case));
+    }
+    (start.elapsed(), sink)
+}
+
+fn truncate_label(label: &str, width: usize) -> String {
+    if label.len() <= width {
+        label.to_string()
+    } else {
+        let mut out = label[..width.saturating_sub(1)].to_string();
+        out.push('~');
+        out
+    }
 }
 
 unsafe fn collect_lc(upstream: &Upstream, lc: *mut CIvLinComb, mode: KeyMode) -> Terms {
@@ -520,7 +636,14 @@ fn checksum(terms: &Terms) -> u64 {
 }
 
 fn format_duration(duration: Duration) -> String {
-    format!("{:.3}s", duration.as_secs_f64())
+    let seconds = duration.as_secs_f64();
+    if seconds >= 1.0 {
+        format!("{seconds:.3}s")
+    } else if seconds >= 0.001 {
+        format!("{:.3}ms", seconds * 1_000.0)
+    } else {
+        format!("{:.3}us", seconds * 1_000_000.0)
+    }
 }
 
 unsafe fn symbol<T: Copy>(handle: *mut libc::c_void, name: &[u8]) -> T {
@@ -607,11 +730,42 @@ fn fusion_cases(upstream: &Upstream) -> Vec<FusionCase> {
 
 fn schubert_cases(upstream: &Upstream) -> Vec<SchubertCase> {
     vec![
+        schubert_case(upstream, "s3 identity/id", &[1, 2, 3], &[1, 2, 3], 0),
+        schubert_case(upstream, "s3 simple/id", &[2, 1, 3], &[1, 2, 3], 0),
         schubert_case(upstream, "s1 squared", &[2, 1], &[2, 1], 0),
         schubert_case(upstream, "rank trunc", &[2, 1], &[2, 1], 2),
+        schubert_case(upstream, "rank three simple", &[2, 1], &[2, 1], 3),
+        schubert_case(upstream, "s3 adjacent", &[2, 1, 3], &[1, 3, 2], 0),
         schubert_case(upstream, "s3 pair", &[3, 1, 2], &[2, 3, 1], 0),
+        schubert_case(upstream, "s3 longest/simple", &[3, 2, 1], &[2, 1, 3], 0),
+        schubert_case(upstream, "s4 simple/id", &[1, 3, 2, 4], &[1, 2, 3, 4], 0),
         schubert_case(upstream, "s4 pair", &[4, 2, 3, 1], &[3, 4, 1, 2], 0),
+        schubert_case(upstream, "s4 grassmannian", &[2, 4, 1, 3], &[3, 1, 4, 2], 0),
+        schubert_case(upstream, "s4 bounded", &[4, 2, 3, 1], &[3, 4, 1, 2], 4),
+        schubert_case(upstream, "s4 long/simple", &[4, 3, 2, 1], &[2, 1, 4, 3], 0),
         schubert_case(upstream, "s5 pair", &[3, 5, 1, 4, 2], &[2, 4, 5, 1, 3], 0),
+        schubert_case(upstream, "s5 mixed", &[5, 1, 3, 2, 4], &[2, 5, 4, 1, 3], 0),
+        schubert_case(
+            upstream,
+            "s6 sparse",
+            &[2, 1, 4, 3, 6, 5],
+            &[3, 2, 1, 6, 5, 4],
+            0,
+        ),
+        schubert_case(
+            upstream,
+            "s6 medium",
+            &[4, 1, 6, 2, 5, 3],
+            &[3, 6, 1, 5, 2, 4],
+            0,
+        ),
+        schubert_case(
+            upstream,
+            "s7 medium",
+            &[3, 7, 1, 5, 2, 6, 4],
+            &[4, 1, 6, 2, 7, 3, 5],
+            0,
+        ),
     ]
 }
 
@@ -619,6 +773,18 @@ fn schubert_string_cases(upstream: &Upstream) -> Vec<SchubertStringCase> {
     vec![
         schubert_string_case(upstream, "binary two", &[0, 1], &[1, 0]),
         schubert_string_case(upstream, "binary four", &[0, 1, 0, 1], &[1, 0, 1, 0]),
+        schubert_string_case(
+            upstream,
+            "binary six",
+            &[0, 1, 0, 1, 0, 1],
+            &[1, 0, 1, 0, 1, 0],
+        ),
+        schubert_string_case(
+            upstream,
+            "binary eight",
+            &[0, 1, 0, 1, 0, 1, 0, 1],
+            &[1, 0, 1, 0, 1, 0, 1, 0],
+        ),
         schubert_string_case(
             upstream,
             "ternary six",
@@ -630,6 +796,18 @@ fn schubert_string_cases(upstream: &Upstream) -> Vec<SchubertStringCase> {
             "ternary mixed",
             &[0, 2, 1, 0, 2, 1],
             &[1, 0, 2, 1, 0, 2],
+        ),
+        schubert_string_case(
+            upstream,
+            "ternary nine",
+            &[0, 1, 2, 0, 1, 2, 0, 1, 2],
+            &[2, 1, 0, 2, 1, 0, 2, 1, 0],
+        ),
+        schubert_string_case(
+            upstream,
+            "quaternary eight",
+            &[0, 1, 2, 3, 0, 1, 2, 3],
+            &[3, 2, 1, 0, 3, 2, 1, 0],
         ),
     ]
 }
