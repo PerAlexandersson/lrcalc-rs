@@ -10,6 +10,15 @@ use num_rational::BigRational;
 use num_traits::Zero;
 
 unsafe extern "C" {
+    fn lrcalc_native_lrcoef_i64(
+        outer: *const i32,
+        outer_len: usize,
+        inner1: *const i32,
+        inner1_len: usize,
+        inner2: *const i32,
+        inner2_len: usize,
+    ) -> i64;
+
     fn lrcalc_native_lrcoef_count_i64(
         outer: *const i32,
         outer_len: usize,
@@ -190,6 +199,24 @@ pub fn lrcoef(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Result<u128, LrC
 
 /// Compute a single coefficient and downcast to the upstream ABI return type.
 pub fn lrcoef_i64(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Option<i64> {
+    let value = unsafe {
+        lrcalc_native_lrcoef_i64(
+            outer.as_ptr(),
+            outer.len(),
+            inner1.as_ptr(),
+            inner1.len(),
+            inner2.as_ptr(),
+            inner2.len(),
+        )
+    };
+    if value >= 0 {
+        Some(value)
+    } else {
+        lrcoef_i64_rust(outer, inner1, inner2)
+    }
+}
+
+fn lrcoef_i64_rust(outer: &[i32], inner1: &[i32], inner2: &[i32]) -> Option<i64> {
     match optim_coef(outer, inner1, inner2).ok()? {
         OptimizedCoef::Zero => Some(0),
         OptimizedCoef::One => Some(1),
@@ -3394,6 +3421,33 @@ mod tests {
         }
         assert_eq!(lrcoef_i64(&[1], &[2], &[1]), Some(0));
         assert_eq!(lrcoef_i64(&[1, 2], &[], &[3]), None);
+    }
+
+    #[test]
+    fn native_i64_full_path_matches_rust_fallback() {
+        let cases = [
+            (&[][..], &[][..], &[][..]),
+            (&[0][..], &[0][..], &[0][..]),
+            (&[1][..], &[0][..], &[0][..]),
+            (&[2, 2, 1][..], &[3][..], &[2][..]),
+            (&[2, 1][..], &[2][..], &[1][..]),
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..]),
+            (&[5, 1][..], &[2, 1][..], &[2, 1][..]),
+            (&[5, 3, 1][..], &[3, 2, 1][..], &[2, 1][..]),
+            (
+                &[7, 6, 5, 4, 3, 2, 1][..],
+                &[4, 4, 3, 2, 1][..],
+                &[5, 4, 3, 2][..],
+            ),
+            (&[30, 20, 10][..], &[20, 10][..], &[20, 10][..]),
+            (&[1, 2][..], &[][..], &[3][..]),
+        ];
+        for (outer, inner, content) in cases {
+            assert_eq!(
+                lrcoef_i64(outer, inner, content),
+                lrcoef_i64_rust(outer, inner, content)
+            );
+        }
     }
 
     #[test]
