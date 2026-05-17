@@ -1,11 +1,10 @@
 //! Schur product and skew Schur expansion.
 //!
-//! Product expansion is currently correctness-first: it enumerates candidate
-//! output partitions and reuses the scalar Littlewood-Richardson engine.  Skew
-//! expansion uses the variable-content beta tableau enumerator, which
-//! accumulates all output contents in one search.
+//! Product expansion realizes a product as the skew Schur function of a
+//! disconnected skew shape.  Skew expansion uses the variable-content beta
+//! tableau enumerator, which accumulates all output contents in one search.
 
-use crate::lrcoef::{beta_lr_content_expansion, lrcoef, LrCoefError};
+use crate::lrcoef::{beta_lr_content_expansion, LrCoefError};
 use crate::partition::Partition;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,24 +41,10 @@ pub fn schur_product_expansion(
     let size = checked_partition_size(&sh1)?
         .checked_add(checked_partition_size(&sh2)?)
         .ok_or(SchurExpansionError::ArithmeticOverflow)?;
-    let max_rows = row_bound(rows, size)?;
+    let (outer, inner) = disconnected_product_skew_shape(&sh1, &sh2)?;
     let max_part = col_bound(cols, size)?;
-    let mut terms = Vec::new();
-
-    visit_partitions(size, max_rows, max_part, &mut Vec::new(), &mut |lambda| {
-        if !contains_partition(lambda, &sh1) || !contains_partition(lambda, &sh2) {
-            return Ok(());
-        }
-        let coefficient = lrcoef(lambda, &sh1, &sh2)?;
-        if coefficient != 0 {
-            terms.push(SchurTerm {
-                partition: lambda.to_vec(),
-                coefficient,
-            });
-        }
-        Ok(())
-    })?;
-
+    let mut terms = schur_skew_expansion(&outer, &inner, rows)?;
+    terms.retain(|term| part_entry_i32(&term.partition, 0) <= max_part);
     Ok(terms)
 }
 
@@ -135,6 +120,7 @@ fn checked_partition_size(partition: &[i32]) -> Result<i32, SchurExpansionError>
     Ok(sum)
 }
 
+#[cfg(test)]
 fn row_bound(rows: i32, size: i32) -> Result<usize, SchurExpansionError> {
     if rows >= 0 {
         usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)
@@ -149,6 +135,27 @@ fn col_bound(cols: i32, size: i32) -> Result<i32, SchurExpansionError> {
     } else {
         Ok(size)
     }
+}
+
+fn disconnected_product_skew_shape(
+    top: &[i32],
+    bottom: &[i32],
+) -> Result<(Vec<i32>, Vec<i32>), SchurExpansionError> {
+    let shift = part_entry_i32(bottom, 0);
+    let mut outer = Vec::with_capacity(top.len() + bottom.len());
+    let mut inner = Vec::with_capacity(top.len());
+
+    for &part in top {
+        outer.push(
+            shift
+                .checked_add(part)
+                .ok_or(SchurExpansionError::ArithmeticOverflow)?,
+        );
+        inner.push(shift);
+    }
+    outer.extend_from_slice(bottom);
+
+    Ok((trim_trailing_zeroes(&outer), trim_trailing_zeroes(&inner)))
 }
 
 fn contains_partition(outer: &[i32], inner: &[i32]) -> bool {
@@ -446,6 +453,7 @@ fn part_entry_i32(partition: &[i32], index: usize) -> i32 {
     partition.get(index).copied().unwrap_or(0)
 }
 
+#[cfg(test)]
 fn visit_partitions<F>(
     remaining: i32,
     rows_left: usize,
@@ -480,6 +488,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lrcoef::lrcoef;
 
     fn term_map(terms: Vec<SchurTerm>) -> Vec<(Vec<i32>, u128)> {
         terms
@@ -511,6 +520,33 @@ mod tests {
             let coefficient = lrcoef(outer, inner, content)?;
             if coefficient != 0 {
                 terms.push((content.to_vec(), coefficient));
+            }
+            Ok(())
+        })?;
+        terms.sort();
+        Ok(terms)
+    }
+
+    fn scalar_product_expansion(
+        sh1: &[i32],
+        sh2: &[i32],
+        rows: i32,
+        cols: i32,
+    ) -> Result<Vec<(Vec<i32>, u128)>, SchurExpansionError> {
+        let size = checked_partition_size(sh1)?
+            .checked_add(checked_partition_size(sh2)?)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+        let max_rows = row_bound(rows, size)?;
+        let max_part = col_bound(cols, size)?;
+        let mut terms = Vec::new();
+
+        visit_partitions(size, max_rows, max_part, &mut Vec::new(), &mut |lambda| {
+            if !contains_partition(lambda, sh1) || !contains_partition(lambda, sh2) {
+                return Ok(());
+            }
+            let coefficient = lrcoef(lambda, sh1, sh2)?;
+            if coefficient != 0 {
+                terms.push((lambda.to_vec(), coefficient));
             }
             Ok(())
         })?;
@@ -602,6 +638,29 @@ mod tests {
             schur_product_expansion(&[1], &[1, -1], -1, -1),
             Err(SchurExpansionError::InvalidPartition)
         );
+    }
+
+    #[test]
+    fn disconnected_product_matches_scalar_for_small_shapes() {
+        for size1 in 0..=5 {
+            for sh1 in partitions_of(size1) {
+                for size2 in 0..=5 {
+                    for sh2 in partitions_of(size2) {
+                        for rows in [-1, 0, 1, 2, 3, 4] {
+                            for cols in [-1, 1, 2, 3, 4] {
+                                assert_eq!(
+                                    sorted_term_map(
+                                        schur_product_expansion(&sh1, &sh2, rows, cols).unwrap()
+                                    ),
+                                    scalar_product_expansion(&sh1, &sh2, rows, cols).unwrap(),
+                                    "sh1={sh1:?} sh2={sh2:?} rows={rows} cols={cols}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

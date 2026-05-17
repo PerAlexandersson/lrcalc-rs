@@ -25,6 +25,8 @@ upstream C.
   `beta=[]` and by skew Kostka weight expansion with dominant finite `beta`.
 - Upstream-style skew-shape optimization for skew Schur expansion, folding
   forced components into the beta prefix before the shared content expansion.
+- Schur product expansion via the same shared skew Schur backend, using a
+  disconnected skew shape and final row/column filtering.
 - GT-chain LR counter, including relative-interior and dimension variants.
 - Hybrid LR full-count stats that dispatch exact Kostka translations to the
   packed Kostka DP, use certified partial-collapse masks near Kostka shapes,
@@ -39,8 +41,6 @@ upstream C.
 
 ## Not Yet Implemented
 
-- Optimized shared-output tableau expansion for `schur_mult`; product
-  expansion is still correct-first and reuses scalar LR coefficients.
 - Schur coproduct, fusion, and quantum product ABI functions.
 - LR tableau iterator ABI.
 - Schubert polynomial ABI and `schubmult` compatibility.

@@ -14,11 +14,12 @@ engines.
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
   It also exports `schur_lrcoef`, `schur_mult`, and `schur_skew`.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
-  still enumerates bounded output partitions and reuses scalar `lrcoef`.
-  Skew expansion now first applies an upstream-style `optim_skew` shape
-  reduction, folds forced components into a beta prefix, and then uses the
-  variable-content beta tableau enumerator so all residual contents are
-  accumulated in one search.
+  expansion now realizes `s_mu s_nu` as the skew Schur function of a
+  disconnected skew shape, so it shares the skew expansion backend instead of
+  looping over scalar LR coefficients.  Skew expansion first applies an
+  upstream-style `optim_skew` shape reduction, folds forced components into a
+  beta prefix, and then uses the variable-content beta tableau enumerator so
+  all residual contents are accumulated in one search.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -103,10 +104,12 @@ tableau selector was about `152x` faster than raw GT-chain paired counts.
 skew Kostka DP took `0.024s`; upstream C repeated Schur multiplication took
 `4.332s`, about `180x` slower.
 
+Schur product now uses disconnected skew Schur expansion.  On 2026-05-17,
+`mult 8 6 4 2 - 8 6 4 2` ran about `1.75x` faster than the previous scalar
+product loop, and `mult 12 9 6 3 - 12 9 6 3` ran about `2.60x` faster.
+
 ## Main Gaps
 
-- Replace the scalar-loop Schur product implementation with a shared expansion
-  iterator/DP when performance matters.
 - Continue low-level skew expansion tuning.  The high-level algorithm now
   matches upstream more closely, but dense cases still trail upstream C because
   the Rust path lacks the exact tight `lrit_next`-style iterator and packed
