@@ -53,6 +53,16 @@ upstream C.
 - Installed compatibility headers.
 - Full C smoke tests and Python/Sage rebuild tests against the Rust library.
 
+## License
+
+`lrcalc-rs` is distributed under the GNU General Public License, version 3 or
+any later version (`GPL-3.0-or-later`).  This matches the upstream
+Littlewood-Richardson Calculator license and is compatible with SageMath's GPL
+distribution model.
+
+See [LICENSE](LICENSE) for the project notice and attribution notes, and
+[COPYING](COPYING) for the full GPLv3 text.
+
 ## Build And Test
 
 ```bash

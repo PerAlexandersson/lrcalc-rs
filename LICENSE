@@ -1,0 +1,30 @@
+lrcalc-rs
+Copyright (C) 2026 lrcalc-rs contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+Compatibility and attribution notes:
+
+- `lrcalc-rs` is intended to provide a drop-in `liblrcalc` ABI and command-line
+  surface compatible with Anders S. Buch's Littlewood-Richardson Calculator.
+- The original Littlewood-Richardson Calculator is:
+
+    Copyright (C) 1999- Anders S. Buch
+
+  and is distributed under the GNU General Public License, either version 3 or
+  any later version.
+- Portions of this project port, mirror, or are derived from algorithms and ABI
+  behavior in the original Littlewood-Richardson Calculator. Those portions
+  remain under GPL-3.0-or-later.
+
+The full GPL version 3 text is in `COPYING`.
