@@ -102,10 +102,12 @@ Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
 about `180x` faster than an upstream-C repeated Schur multiplication baseline.
 
 Current `lrcoef_ffi_bench.sh 5000 mixed` result: the Rust `lrcoef_i64` ABI path
-matches upstream C on 24 mixed LR cases and takes `1.33x` upstream C time
-overall.  Count-heavy nonzero cases are typically around `1.27x`--`1.35x`;
-zero and early-exit cases are closer to `1.6x`, which points to setup and
-normalization overhead as the next gap.
+with the native C count kernel matches upstream C on 24 mixed LR cases and
+takes `1.17x` upstream C time overall.  The larger count-heavy cases are now
+near parity (`1.02x`--`1.09x`), while zero and early-exit cases are still around
+`1.5x`--`1.7x`, pointing to setup and normalization overhead as the next gap.
+On `lrcoef_ffi_bench.sh 5000 large-few-parts`, Rust is slightly faster overall
+at `0.99x` upstream C.
 
 Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
 fusion are near upstream C parity (`1.07x`, `0.80x`, and `1.09x`

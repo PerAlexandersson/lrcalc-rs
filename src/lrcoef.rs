@@ -9,6 +9,18 @@ use std::collections::HashMap;
 use num_rational::BigRational;
 use num_traits::Zero;
 
+unsafe extern "C" {
+    fn lrcalc_native_lrcoef_count_i64(
+        outer: *const i32,
+        outer_len: usize,
+        inner: *const i32,
+        inner_len: usize,
+        content: *const i32,
+        content_len: usize,
+        content_sum: i32,
+    ) -> i64;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LrCoefError {
     InvalidPartition,
@@ -1735,7 +1747,41 @@ fn lrcoef_count(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<u128, L
 fn lrcoef_count_i64(outer: &[i32], inner: &[i32], content: &[i32]) -> Result<i64, LrCoefError> {
     let content_sum = part_sum(content)?;
     debug_assert!(content_sum > 1);
+    let value = unsafe {
+        lrcalc_native_lrcoef_count_i64(
+            outer.as_ptr(),
+            outer.len(),
+            inner.as_ptr(),
+            inner.len(),
+            content.as_ptr(),
+            content.len(),
+            content_sum,
+        )
+    };
+    if value >= 0 {
+        Ok(value)
+    } else {
+        lrcoef_count_i64_rust_with_sum(outer, inner, content, content_sum)
+    }
+}
 
+#[cfg(test)]
+fn lrcoef_count_i64_rust(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+) -> Result<i64, LrCoefError> {
+    let content_sum = part_sum(content)?;
+    debug_assert!(content_sum > 1);
+    lrcoef_count_i64_rust_with_sum(outer, inner, content, content_sum)
+}
+
+fn lrcoef_count_i64_rust_with_sum(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    content_sum: i32,
+) -> Result<i64, LrCoefError> {
     let mut boxes = new_count_skewtab(outer, inner, part_length(content), content_sum)?;
     let mut counts = new_content(content);
 
@@ -3348,6 +3394,29 @@ mod tests {
         }
         assert_eq!(lrcoef_i64(&[1], &[2], &[1]), Some(0));
         assert_eq!(lrcoef_i64(&[1, 2], &[], &[3]), None);
+    }
+
+    #[test]
+    fn native_i64_count_matches_rust_fallback() {
+        let cases = [
+            (&[3, 2, 1][..], &[2, 1][..], &[2, 1][..]),
+            (
+                &[7, 6, 5, 4, 3, 2, 1][..],
+                &[4, 4, 3, 2, 1][..],
+                &[5, 4, 3, 2][..],
+            ),
+            (&[9, 6, 3][..], &[6, 3][..], &[6, 3][..]),
+            (&[30, 20, 10][..], &[20, 10][..], &[20, 10][..]),
+        ];
+        for (outer, inner, content) in cases {
+            let OptimizedCoef::Count(shape) = optim_coef(outer, inner, content).unwrap() else {
+                panic!("expected count shape");
+            };
+            assert_eq!(
+                lrcoef_count_i64(&shape.outer, &shape.inner, &shape.content),
+                lrcoef_count_i64_rust(&shape.outer, &shape.inner, &shape.content)
+            );
+        }
     }
 
     #[test]
