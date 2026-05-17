@@ -21,6 +21,8 @@ upstream C.
 - `lrcalc coef` / `lrcalc lrcoef`, `lrcalc mult`, `lrcalc skew`,
   `lrcalc coprod`, and `lrcalc tab` CLI commands.  `mult` supports ordinary,
   fusion `-f`, and quantum-printing `-q` products.
+- `schubmult` CLI and Schubert ABI exports `trans`, `monk`,
+  `mult_poly_schubert`, `mult_schubert`, and `mult_schubert_str`.
 - Native Buch-style single LR coefficient counter with upstream-style
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
@@ -47,7 +49,6 @@ upstream C.
 
 ## Not Yet Implemented
 
-- Schubert polynomial ABI and `schubmult` compatibility.
 - Installed compatibility headers.
 - Full C smoke tests and Python/Sage rebuild tests against the Rust library.
 
@@ -70,6 +71,7 @@ timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -f 3,2 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -q 3,2 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- skew 3 2 1 / 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- tab 2 1 / 1
+timeout 60s nice -n 10 cargo run --bin schubmult -- 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
 timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1

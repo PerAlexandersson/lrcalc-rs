@@ -1,6 +1,10 @@
 //! C ABI types and functions matching the original `lrcalc` headers.
 
 use crate::lrcoef::lrcoef_i64;
+use crate::schubert::{
+    monk_product, multiply_poly_schubert, multiply_schubert, multiply_schubert_strings,
+    trans_polynomial, LinearCombination,
+};
 use crate::schur::{
     fusion_reduce_values, schur_coproduct_expansion, schur_product_expansion,
     schur_product_fusion_expansion, schur_skew_expansion, SchurTerm, SignedSchurTerm,
@@ -258,6 +262,70 @@ unsafe fn ivlc_from_signed_terms(terms: &[SignedSchurTerm], key_len: usize) -> *
         }
     }
     lc
+}
+
+unsafe fn ivlc_from_i32_terms(terms: &LinearCombination) -> *mut IvLinComb {
+    let initial_elts = u32::try_from(terms.len().saturating_add(1))
+        .unwrap_or(u32::MAX)
+        .max(IVLC_ARRAY_SZ);
+    let lc = ivlc_new(IVLC_HASHTABLE_SZ, initial_elts);
+    if lc.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { ivlc_fill_i32_terms(lc, terms) } != 0 {
+        unsafe { ivlc_free_all(lc) };
+        return ptr::null_mut();
+    }
+    lc
+}
+
+unsafe fn ivlc_fill_i32_terms(lc: *mut IvLinComb, terms: &LinearCombination) -> c_int {
+    for (key_values, &value) in terms {
+        let key = unsafe { ivector_from_partition(key_values, key_values.len()) };
+        if key.is_null() {
+            return -1;
+        }
+        let hash = unsafe { iv_hash(key) } as u32;
+        if unsafe { ivlc_add_element(lc, value, key, hash, LC_FREE_ZERO) } != 0 {
+            return -1;
+        }
+    }
+    0
+}
+
+unsafe fn ivlc_collect_i32_terms(lc: *mut IvLinComb) -> LinearCombination {
+    let mut terms = LinearCombination::new();
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            let key = ivlc_key(&itr);
+            terms.insert(ivector_values(key).to_vec(), ivlc_value(&itr));
+            ivlc_next(&mut itr);
+        }
+    }
+    terms
+}
+
+unsafe fn ivlc_collect_owned_keys(lc: *mut IvLinComb) -> Vec<*mut IVector> {
+    let mut keys = Vec::new();
+    let mut itr = IvlcIter {
+        ht: ptr::null_mut(),
+        index: 0,
+        i: 0,
+    };
+    unsafe {
+        ivlc_first(lc, &mut itr);
+        while ivlc_good(&itr) != 0 {
+            keys.push(ivlc_key(&itr));
+            ivlc_next(&mut itr);
+        }
+    }
+    keys
 }
 
 unsafe fn lrit_alloc(array_len: usize) -> *mut LrTabIter {
@@ -1422,6 +1490,115 @@ pub unsafe extern "C" fn ivlc_add_multiple(
 
 /// # Safety
 ///
+/// `w` must point to a valid `IVector` allocation.
+#[no_mangle]
+pub unsafe extern "C" fn trans(w: *const IVector, vars: c_int) -> *mut IvLinComb {
+    if w.is_null() {
+        return ptr::null_mut();
+    }
+    let values = unsafe { ivector_values(w) };
+    let terms = match trans_polynomial(values, vars) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    unsafe { ivlc_from_i32_terms(&terms) }
+}
+
+/// # Safety
+///
+/// `slc` must point to a valid linear combination.
+#[no_mangle]
+pub unsafe extern "C" fn monk(i: c_int, slc: *mut IvLinComb, rank: c_int) -> *mut IvLinComb {
+    if slc.is_null() {
+        return ptr::null_mut();
+    }
+    let source = unsafe { ivlc_collect_i32_terms(slc) };
+    let terms = match monk_product(i, &source, rank) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    unsafe { ivlc_from_i32_terms(&terms) }
+}
+
+/// # Safety
+///
+/// `poly` must point to a valid linear combination whose keys are owned by the
+/// table. `perm` must point to a valid `IVector` allocation.
+#[no_mangle]
+pub unsafe extern "C" fn mult_poly_schubert(
+    poly: *mut IvLinComb,
+    perm: *const IVector,
+    rank: c_int,
+) -> *mut IvLinComb {
+    if poly.is_null() || perm.is_null() {
+        return ptr::null_mut();
+    }
+    let old_keys = unsafe { ivlc_collect_owned_keys(poly) };
+    let source = unsafe { ivlc_collect_i32_terms(poly) };
+    unsafe {
+        ivlc_reset(poly);
+        for key in old_keys {
+            iv_free(key);
+        }
+    }
+    let perm_values = unsafe { ivector_values(perm) };
+    let terms = match multiply_poly_schubert(&source, perm_values, rank) {
+        Ok(terms) => terms,
+        Err(_) => {
+            unsafe { ivlc_free_all(poly) };
+            return ptr::null_mut();
+        }
+    };
+    if unsafe { ivlc_fill_i32_terms(poly, &terms) } != 0 {
+        unsafe { ivlc_free_all(poly) };
+        return ptr::null_mut();
+    }
+    poly
+}
+
+/// # Safety
+///
+/// `w1` and `w2` must point to valid `IVector` allocations.
+#[no_mangle]
+pub unsafe extern "C" fn mult_schubert(
+    w1: *const IVector,
+    w2: *const IVector,
+    rank: c_int,
+) -> *mut IvLinComb {
+    if w1.is_null() || w2.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { ivector_values(w1) };
+    let right = unsafe { ivector_values(w2) };
+    let terms = match multiply_schubert(left, right, rank) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    unsafe { ivlc_from_i32_terms(&terms) }
+}
+
+/// # Safety
+///
+/// `str1` and `str2` must point to valid `IVector` allocations.
+#[no_mangle]
+pub unsafe extern "C" fn mult_schubert_str(
+    str1: *const IVector,
+    str2: *const IVector,
+) -> *mut IvLinComb {
+    if str1.is_null() || str2.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { ivector_values(str1) };
+    let right = unsafe { ivector_values(str2) };
+    let terms = match multiply_schubert_strings(left, right) {
+        Ok(terms) => terms,
+        Err(_) => return ptr::null_mut(),
+    };
+    unsafe { ivlc_from_i32_terms(&terms) }
+}
+
+/// # Safety
+///
 /// Non-null pointers must point to valid `IVector` allocations.
 #[no_mangle]
 pub unsafe extern "C" fn schur_lrcoef(
@@ -1656,6 +1833,25 @@ mod tests {
         terms
     }
 
+    unsafe fn collect_lc_exact(lc: *mut IvLinComb) -> Vec<(Vec<i32>, i32)> {
+        let mut terms = Vec::new();
+        let mut itr = IvlcIter {
+            ht: ptr::null_mut(),
+            index: 0,
+            i: 0,
+        };
+        unsafe {
+            ivlc_first(lc, &mut itr);
+            while ivlc_good(&itr) != 0 {
+                let key = ivlc_key(&itr);
+                terms.push((ivector_values(key).to_vec(), ivlc_value(&itr)));
+                ivlc_next(&mut itr);
+            }
+        }
+        terms.sort();
+        terms
+    }
+
     unsafe fn collect_lc_lengths(lc: *mut IvLinComb) -> Vec<(Vec<i32>, u32, i32)> {
         let mut terms = Vec::new();
         let mut itr = IvlcIter {
@@ -1829,6 +2025,80 @@ mod tests {
             assert_eq!(collect_lc_trimmed(lc), vec![(vec![3, 1], 5)]);
 
             ivlc_free_all(lc);
+        }
+    }
+
+    #[test]
+    fn schubert_trans_and_monk_work_through_abi() {
+        unsafe {
+            let permutation = vector_from_values(&[2, 1]);
+            let poly = trans(permutation, 0);
+            assert!(!poly.is_null());
+            assert_eq!(collect_lc_exact(poly), vec![(vec![1], 1)]);
+
+            let slc = ivlc_new(5, 2);
+            assert!(!slc.is_null());
+            let identity = vector_from_values(&[]);
+            let hash = iv_hash(identity) as u32;
+            assert_eq!(ivlc_add_element(slc, 1, identity, hash, LC_FREE_ZERO), 0);
+
+            let product = monk(1, slc, 0);
+            assert!(!product.is_null());
+            assert_eq!(collect_lc_trimmed(product), vec![(vec![2, 1], 1)]);
+
+            ivlc_free_all(product);
+            ivlc_free_all(slc);
+            ivlc_free_all(poly);
+            iv_free(permutation);
+        }
+    }
+
+    #[test]
+    fn schubert_multiply_polynomial_mutates_input_lc() {
+        unsafe {
+            let poly = ivlc_new(5, 2);
+            assert!(!poly.is_null());
+            let monomial = vector_from_values(&[1]);
+            let hash = iv_hash(monomial) as u32;
+            assert_eq!(ivlc_add_element(poly, 1, monomial, hash, LC_FREE_ZERO), 0);
+
+            let permutation = vector_from_values(&[2, 1]);
+            let product = mult_poly_schubert(poly, permutation, 0);
+            assert_eq!(product, poly);
+            assert_eq!(collect_lc_trimmed(product), vec![(vec![3, 1, 2], 1)]);
+
+            ivlc_free_all(product);
+            iv_free(permutation);
+        }
+    }
+
+    #[test]
+    fn schubert_multiply_permutations_through_abi() {
+        unsafe {
+            let left = vector_from_values(&[2, 1]);
+            let right = vector_from_values(&[2, 1]);
+            let product = mult_schubert(left, right, 0);
+            assert!(!product.is_null());
+            assert_eq!(collect_lc_trimmed(product), vec![(vec![3, 1, 2], 1)]);
+
+            ivlc_free_all(product);
+            iv_free(right);
+            iv_free(left);
+        }
+    }
+
+    #[test]
+    fn schubert_multiply_strings_through_abi() {
+        unsafe {
+            let left = vector_from_values(&[0, 1]);
+            let right = vector_from_values(&[1, 0]);
+            let product = mult_schubert_str(left, right);
+            assert!(!product.is_null());
+            assert_eq!(collect_lc_exact(product), vec![(vec![1, 0], 1)]);
+
+            ivlc_free_all(product);
+            iv_free(right);
+            iv_free(left);
         }
     }
 

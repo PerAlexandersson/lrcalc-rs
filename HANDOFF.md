@@ -9,13 +9,14 @@ engines.
 ## Current State
 
 - Rust crate builds as `liblrcalc` (`cdylib`, `staticlib`, `rlib`) plus a
-  `lrcalc` binary.
+  `lrcalc` binary and a `schubmult` binary.
 - `src/abi.rs` exports the `ivector` allocation/copy/hash/sum subset and
   the core `ivlincomb` allocation/insertion/lookup/iteration/free surface.
   It also exports `schur_lrcoef`, `schur_mult`, `fusion_reduce`,
   `fusion_reduce_lc`, `schur_mult_fusion`, `schur_skew`, `schur_coprod`,
   `part_qdegree`, `part_qentry`, `lrit_new`, `lrit_good`, `lrit_next`, and
-  `lrit_free`.
+  `lrit_free`.  Schubert exports `trans`, `monk`, `mult_poly_schubert`,
+  `mult_schubert`, and `mult_schubert_str` are implemented.
 - `src/schur.rs` contains Schur product and skew Schur expansion.  Product
   expansion now realizes `s_mu s_nu` as the skew Schur function of a
   disconnected skew shape, so it shares the skew expansion backend instead of
@@ -42,10 +43,13 @@ engines.
 - `src/lr_signed.rs` contains the signed Kostka expansion for LR coefficients.
 - `src/lr_ehrhart.rs` interpolates h-vectors for pure stretched LR families
   and beta-prefix stretched families.
+- `src/schubert.rs` ports upstream `schublib.c` recursion for Schubert
+  transition polynomials, Monk multiplication, permutation products, and string
+  products.
 - CLI commands expose the coefficient engines, beta-prefix LR counts,
   diagnostic/stat modes, and ordinary upstream-style `mult`, `skew`, and
   `coprod`.  `mult -f rows,level` and `mult -q rows,level` are implemented.
-  CLI `tab` is implemented.  `schubmult` is still missing.
+  CLI `tab` is implemented.  Standalone `schubmult` is implemented.
 - Benchmark scripts compare selected Rust paths against upstream C when an
   upstream binary is available.
 - `src/bin/stretched_dp_bench.rs` compares paired full/interior counts for
@@ -60,7 +64,7 @@ engines.
 ## Verified
 
 `timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
-113 library tests, all benchmark-bin test targets, and doc-tests.
+120 library tests, all benchmark-bin test targets, and doc-tests.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -136,6 +140,14 @@ CLI `tab` was added on 2026-05-17 on top of the same `lrit_*` iterator.
 Output matched upstream exactly on five small cases, including row-bound and
 weight-filtered examples.
 
+Schubert support was added on 2026-05-17.  Focused Rust and ABI tests pass for
+`trans`, `monk`, `mult_poly_schubert`, `mult_schubert`, and
+`mult_schubert_str`.  The standalone `schubmult` binary matched upstream after
+sorting output lines on all 576 `S_4` permutation products and 20 compatible
+binary-string products of length 3.  `timeout 60s nice -n 10 cargo build
+--release` passed, and `nm -D` shows the five Schubert symbols exported from
+`target/release/liblrcalc.so`.
+
 ## Main Gaps
 
 - Continue low-level skew expansion tuning.  The high-level algorithm now
@@ -144,7 +156,7 @@ weight-filtered examples.
   output accumulator.
 - Optimize fusion products by porting upstream `optim_fusion` rather than
   reducing a full row-bounded product.
-- Implement C ABI functions for Schubert products.
+- Add C smoke tests for the Schubert ABI and `schubmult` executable.
 - Add compatibility headers and C smoke tests for struct layout and exported
   symbols.
 - Add Python/Sage rebuild tests against the Rust `liblrcalc`.
