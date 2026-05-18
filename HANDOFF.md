@@ -9,7 +9,12 @@ engines.
 ## Current State
 
 - Rust crate builds as `liblrcalc` (`cdylib`, `staticlib`, `rlib`) plus a
-  `lrcalc` binary and a `schubmult` binary.
+  `lrcalc` binary and a `schubmult` binary.  Linux release builds now carry
+  upstream-compatible SONAME `liblrcalc.so.2`.
+- Compatibility headers for the upstream Python/Sage Cython surface live under
+  `include/lrcalc/`.  `scripts/stage_liblrcalc_prefix.sh` stages those headers
+  plus `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, and
+  `liblrcalc.a` under `target/lrcalc-rs-prefix`.
 - `src/abi.rs` exports the upstream C ABI symbol surface: `ivector`,
   `ivlincomb`, `ilist`, `ivlist`, partition iterators, partition helpers,
   permutation/string helpers, LR-tableau iterators, Schur/fusion functions,
@@ -61,8 +66,14 @@ engines.
 
 ## Verified
 
-`timeout 60s nice -n 10 cargo test` passed on 2026-05-17:
-124 library tests, all benchmark-bin test targets, and doc-tests.
+`timeout 60s nice -n 10 cargo test` passed on 2026-05-18:
+130 library tests, all benchmark-bin test targets, and doc-tests.
+
+`timeout 120s nice -n 10 scripts/python_bindings_smoke.sh` passed on
+2026-05-18.  It builds the upstream `python/lrcalc.pyx` Cython module against
+the staged Rust `liblrcalc` prefix and checks `lrcoef`, `mult`, `skew`,
+`coprod`, `mult_fusion`, Schubert multiplication, string Schubert
+multiplication, and LR-tableau iteration from Python.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -196,9 +207,10 @@ the public Rust path keeps a Rust fallback for errors and overflow.
   output accumulator.
 - Optimize fusion products by using the newly exposed `optim_fusion` path in
   `schur_mult_fusion` rather than reducing a full row-bounded product.
-- Add C smoke tests for the ABI surface, including Schubert and `schubmult`.
-- Add compatibility headers and C smoke tests for struct layout.
-- Add Python/Sage rebuild tests against the Rust `liblrcalc`.
+- Add C smoke tests for the ABI surface, including struct layout, Schubert, and
+  `schubmult`.
+- Audit and complete installed headers beyond the Python/Sage Cython surface.
+- Add Sage rebuild tests against the Rust `liblrcalc`.
 - Decide which native LR engine should serve each workload class after broader
   benchmarks.
 

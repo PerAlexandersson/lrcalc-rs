@@ -51,6 +51,9 @@ To support SymCat and related symmetric-functions resources, see
 ## Implemented
 
 - `liblrcalc` library target configured as `cdylib`, `staticlib`, and `rlib`.
+- Linux release builds use upstream-compatible SONAME `liblrcalc.so.2`.
+- Compatibility headers for the upstream Python/Sage Cython surface under
+  `include/lrcalc/`.
 - C-facing `ivector`, `ivlincomb`, `ilist`, `ivlist`, partition iterator,
   partition, permutation/string, LR-tableau iterator, Schur, fusion, and
   Schubert ABI surfaces.  A release `nm` check currently has no missing
@@ -86,8 +89,9 @@ To support SymCat and related symmetric-functions resources, see
 
 ## Not Yet Implemented
 
-- Installed compatibility headers.
-- Full C smoke tests and Python/Sage rebuild tests against the Rust library.
+- Full C layout/link smoke tests.
+- Sage rebuild tests against the Rust library.
+- Complete installed-header audit beyond the Python/Sage Cython surface.
 
 ## License
 
@@ -110,10 +114,14 @@ For the public-repository and drop-in release checklist, see
 ```bash
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
+timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
 ```
 
 The Rust library target is named `lrcalc`, so release builds should produce
-`liblrcalc.so` and `liblrcalc.a` on Linux.
+`liblrcalc.so` and `liblrcalc.a` on Linux.  The staging helper
+`scripts/stage_liblrcalc_prefix.sh` creates a local prefix under
+`target/lrcalc-rs-prefix` with `include/lrcalc/`, `liblrcalc.a`,
+`liblrcalc.so`, `liblrcalc.so.2`, and `liblrcalc.so.2.0.0`.
 
 ## Useful Commands
 

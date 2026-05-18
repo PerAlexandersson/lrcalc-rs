@@ -20,13 +20,15 @@ compatibility release still needs a few packaging checks.
 timeout 60s nice -n 10 cargo fmt --check
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
+timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
 ```
 
 ## Drop-in Compatibility Release Blockers
 
-- Add installed compatibility headers under `include/lrcalc/`.
 - Add C smoke tests that link against the built `liblrcalc`.
-- Add Python/Sage rebuild tests or a documented manual recipe.
+- Audit and complete installed headers beyond the Python/Sage Cython surface,
+  including the current non-variadic initializer shim caveat.
+- Add Sage rebuild tests or a documented manual recipe.
 - Re-run the upstream exported-symbol inventory against a release build.
 - Re-run the benchmark report against a fresh upstream C checkout.
 - Decide whether output order must exactly match upstream for each CLI command.

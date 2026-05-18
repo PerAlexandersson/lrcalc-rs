@@ -28,6 +28,12 @@ timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
 ```
 
+If an upstream checkout is available at `/tmp/lrcalc-upstream`, also run:
+
+```bash
+timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
+```
+
 When comparing against upstream C, point benchmark scripts at an upstream build
 with `UPSTREAM_LIB`, `UPSTREAM_LIB_DIR`, or `UPSTREAM_BIN` as appropriate.
 The scripts under `scripts/` print the variables they expect.

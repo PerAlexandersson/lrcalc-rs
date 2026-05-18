@@ -5,6 +5,10 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=src/native/lrcoef_count.c");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,liblrcalc.so.2");
+    }
+
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let object = out_dir.join("lrcoef_count.o");
     let library = out_dir.join("liblrcalc_native.a");
