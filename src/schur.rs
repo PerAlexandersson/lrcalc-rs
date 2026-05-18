@@ -4,7 +4,7 @@
 //! disconnected skew shape.  Skew expansion uses the variable-content beta
 //! tableau enumerator, which accumulates all output contents in one search.
 
-use crate::lrcoef::{visit_beta_lr_content_expansion_with_len, LrCoefError};
+use crate::lrcoef::{compact_skew_shape, visit_beta_lr_content_expansion_with_len, LrCoefError};
 use crate::partition::Partition;
 use std::collections::BTreeMap;
 
@@ -103,6 +103,7 @@ where
         begin(0);
         return Ok(());
     }
+    let (outer, inner) = compact_skew_shape(outer, inner);
     let Some(optimized) = optimize_skew_shape(&outer, &inner, rows)? else {
         begin(0);
         return Ok(());
@@ -1165,6 +1166,12 @@ mod tests {
     fn skew_two_cell_hook() {
         let terms = schur_skew_expansion(&[2, 1], &[1], -1).unwrap();
         assert_eq!(term_map(terms), vec![(vec![2], 1), (vec![1, 1], 1)]);
+    }
+
+    #[test]
+    fn skew_removes_large_empty_column_runs_before_expansion() {
+        let terms = schur_skew_expansion(&[100_000], &[99_999], -1).unwrap();
+        assert_eq!(term_map(terms), vec![(vec![1], 1)]);
     }
 
     #[test]

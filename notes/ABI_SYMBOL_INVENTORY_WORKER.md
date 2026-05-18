@@ -57,8 +57,9 @@ Concrete functions from `vector.tpl.h`:
 
 Current Rust export check after the ABI hardening pass: release `nm -D` has no
 missing upstream exported symbols; the only intentional extra symbol is
-`lrcalc_new_abi_version`.  The concrete staged headers also provide
-source-level variadic `*_new_init` constructors for arbitrary-arity C calls.
+`lrcalc_new_abi_version`.  The `*_new_init` symbols are implemented as true
+C-variadic exports through `src/native/abi_variadic.c`, and the concrete staged
+headers also provide source-level variadic wrappers for rebuilt C callers.
 
 ### `ilist.h`
 

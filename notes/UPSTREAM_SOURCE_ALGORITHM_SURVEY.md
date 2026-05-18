@@ -673,10 +673,11 @@ What remains for release hardening:
 - a final decision on whether CLI term order must exactly follow upstream
   hash-table iteration.
 
-The concrete ABI issue from the survey has been fixed in the staged headers:
-`ivlc_iter.index` and `ivlc_iter.i` now follow the upstream C header and use
-`size_t`.  Python/Sage smoke tests currently pass through the staged Rust
-prefix.
+The concrete `ivlc_iter` ABI issue from the survey has been fixed in the staged
+headers: `ivlc_iter.index` and `ivlc_iter.i` now follow the upstream C header
+and use `size_t`.  The exported `*_new_init` constructors are also true
+C-variadic symbols through `src/native/abi_variadic.c`.  Python/Sage smoke
+tests currently pass through the staged Rust prefix.
 
 ## Room For Rust Improvements
 

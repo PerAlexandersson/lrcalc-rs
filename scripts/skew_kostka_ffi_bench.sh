@@ -7,7 +7,7 @@ REPEAT="${1:-2000}"
 
 if [[ ! -f "$UPSTREAM_LIB" ]]; then
   cat >&2 <<EOF
-upstream static library not found:
+upstream shared library not found:
   $UPSTREAM_LIB
 
 Build it first:

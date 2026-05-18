@@ -1358,23 +1358,20 @@ fn nonempty_skew_rows(outer: &[i32], inner: &[i32]) -> usize {
         .count()
 }
 
-fn compact_skew_shape(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+pub(crate) fn compact_skew_shape(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
     loop {
-        let previous_outer = outer.clone();
-        let previous_inner = inner.clone();
+        let (row_outer, row_inner) = remove_empty_skew_rows(&outer, &inner);
+        let (next_outer, next_inner) = remove_empty_skew_columns(row_outer, row_inner);
 
-        (outer, inner) = remove_empty_skew_rows(&outer, &inner);
-        (outer, inner) = remove_empty_skew_columns(outer, inner);
-        outer = trim_vector(&outer);
-        inner = trim_vector(&inner);
+        debug_assert!(valid_partition(&next_outer));
+        debug_assert!(valid_partition(&next_inner));
+        debug_assert!(partition_less_equal(&next_inner, &next_outer));
 
-        debug_assert!(valid_partition(&outer));
-        debug_assert!(valid_partition(&inner));
-        debug_assert!(partition_less_equal(&inner, &outer));
-
-        if outer == previous_outer && inner == previous_inner {
+        if next_outer == outer && next_inner == inner {
             return (outer, inner);
         }
+        outer = next_outer;
+        inner = next_inner;
     }
 }
 
@@ -1395,41 +1392,47 @@ fn remove_empty_skew_rows(outer: &[i32], inner: &[i32]) -> (Vec<i32>, Vec<i32>) 
     (trim_vector(&compact_outer), trim_vector(&compact_inner))
 }
 
-fn remove_empty_skew_columns(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
-    let mut column = 1i32;
-    loop {
-        let Some(&max_outer) = outer.first() else {
-            return (outer, inner);
-        };
-        if column > max_outer {
-            return (trim_vector(&outer), trim_vector(&inner));
-        }
+fn remove_empty_skew_columns(outer: Vec<i32>, inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+    let Some(&max_outer) = outer.first() else {
+        return (outer, inner);
+    };
+    if max_outer <= 0 {
+        return (trim_vector(&outer), trim_vector(&inner));
+    }
 
-        let has_skew_cell = (0..outer.len())
-            .any(|row| part_entry(&inner, row) < column && column <= part_entry(&outer, row));
-        if has_skew_cell {
-            column += 1;
+    let mut breakpoints = Vec::with_capacity(outer.len() + inner.len() + 1);
+    breakpoints.push(0);
+    breakpoints.extend(outer.iter().copied().filter(|&part| part > 0));
+    breakpoints.extend(inner.iter().copied().filter(|&part| part > 0));
+    breakpoints.sort_unstable();
+    breakpoints.dedup();
+
+    let rows = outer.len().max(inner.len());
+    let mut compact_outer = vec![0; rows];
+    let mut compact_inner = vec![0; rows];
+
+    for pair in breakpoints.windows(2) {
+        let low = pair[0];
+        let high = pair[1];
+        let width = high - low;
+        let outer_height = partition_height_at(&outer, high);
+        let inner_height = partition_height_at(&inner, high);
+        if outer_height <= inner_height {
             continue;
         }
-
-        let has_diagram_cell = outer.iter().any(|&part| part >= column);
-        if !has_diagram_cell {
-            return (trim_vector(&outer), trim_vector(&inner));
+        for value in compact_outer.iter_mut().take(outer_height) {
+            *value += width;
         }
-
-        for part in &mut outer {
-            if *part >= column {
-                *part -= 1;
-            }
+        for value in compact_inner.iter_mut().take(inner_height) {
+            *value += width;
         }
-        for part in &mut inner {
-            if *part >= column {
-                *part -= 1;
-            }
-        }
-        outer = trim_vector(&outer);
-        inner = trim_vector(&inner);
     }
+
+    (trim_vector(&compact_outer), trim_vector(&compact_inner))
+}
+
+fn partition_height_at(partition: &[i32], column: i32) -> usize {
+    partition.partition_point(|&part| part >= column)
 }
 
 pub(crate) fn optim_coef(
@@ -3591,6 +3594,18 @@ mod tests {
         assert_eq!(lrcoef(&[3, 2, 1], &[2, 1], &[2, 1]), Ok(2));
         assert_eq!(lrcoef(&[4, 2], &[2, 1], &[2, 1]), Ok(1));
         assert_eq!(lrcoef(&[5, 1], &[2, 1], &[2, 1]), Ok(0));
+    }
+
+    #[test]
+    fn compact_skew_shape_removes_large_empty_column_runs() {
+        assert_eq!(
+            compact_skew_shape(vec![100_000], vec![99_999]),
+            (vec![1], vec![])
+        );
+        assert_eq!(
+            compact_skew_shape(vec![100_002, 100_000], vec![100_000, 100_000]),
+            (vec![2], vec![])
+        );
     }
 
     #[test]

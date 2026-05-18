@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM_PY="${UPSTREAM_PY:-/tmp/lrcalc-upstream/python}"
-PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-prefix"}"
+PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-python-prefix"}"
 VENV="${VENV:-/tmp/lrcalc-rs-python-smoke}"
 
 if [[ ! -f "$UPSTREAM_PY/setup.py" || ! -f "$UPSTREAM_PY/lrcalc.pyx" ]]; then

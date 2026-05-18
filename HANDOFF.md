@@ -72,15 +72,15 @@ engines.
 2026-05-18.
 
 `timeout 60s nice -n 10 cargo test -q` passed on 2026-05-18:
-132 library tests, all benchmark-bin test targets, and doc-tests.
+134 library tests, all benchmark-bin test targets, and doc-tests.
 
 `timeout 60s nice -n 10 scripts/c_abi_smoke.sh` passed on 2026-05-18.  It
 stages the Rust install prefix, compiles `tests/c_abi_smoke.c` against the
 installed headers with `-Werror`, checks `ivlc_iter` layout against `size_t`
 fields, links both shared and static `liblrcalc`, and exercises arbitrary-arity
-source-level initializer calls, low-level containers, Schur helpers,
-LR-tableau iteration, Schubert multiplication, `optim_skew`, `lrcoef_count`,
-and the staged `lrcalc`/`schubmult` binaries.
+source-level and exported-symbol initializer calls, low-level containers, Schur
+helpers, LR-tableau iteration, Schubert multiplication, `optim_skew`,
+`lrcoef_count`, and the staged `lrcalc`/`schubmult` binaries.
 
 `timeout 120s nice -n 10 scripts/python_bindings_smoke.sh` passed on
 2026-05-18.  It builds the upstream `python/lrcalc.pyx` Cython module against
@@ -95,13 +95,16 @@ Sage 10.8 was installed from conda-forge on 2026-05-18:
 
 `timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh` passed on
 2026-05-18.  It runs Sage's `sage.libs.lrcalc.lrcalc` wrapper with
-`LD_PRELOAD=target/lrcalc-rs-prefix/lib/liblrcalc.so.2`, verifies through
+`LD_PRELOAD=target/lrcalc-rs-sage-prefix/lib/liblrcalc.so.2`, verifies through
 `/proc/self/maps` that the Rust `liblrcalc.so.2.0.0` is loaded, and checks
 `lrcoef`, `mult`, `skew`, `coprod`, Schubert multiplication, and LR-tableau
 iteration.
 
 `timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh` passed on
-2026-05-18 and wrote `notes/SAGE_LRCALC_BENCHMARK.md`.  It compares Sage's
+2026-05-18 and wrote the tracked `notes/SAGE_LRCALC_BENCHMARK.md` report.
+The script now writes to `target/SAGE_LRCALC_BENCHMARK.md` by default; set
+`OUT=notes/SAGE_LRCALC_BENCHMARK.md` when intentionally refreshing the tracked
+note.  It compares Sage's
 wrapper using conda-forge C `liblrcalc` against the same wrapper using the Rust
 `liblrcalc` via `LD_PRELOAD`.  Current geometric mean is `0.965x` Rust/Sage-C,
 median is `1.034x`, and correctness signatures match on all 11 cases.
@@ -196,11 +199,9 @@ The remaining upstream-exported ABI helpers were added on 2026-05-17:
 shows no missing exported symbols and only the intentional extra
 `lrcalc_new_abi_version`.
 Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic.
-Stable Rust cannot define true variadic exports, so the exported dynamic
-symbols remain fixed-argument compatibility shims covering the first eight
-initializer values.  The staged C headers now provide source-level static
-inline variadic constructors, and the C smoke test covers calls with more than
-eight initializer values.
+The exported symbols are now implemented by `src/native/abi_variadic.c`; the
+staged C headers also provide source-level static inline variadic constructors,
+and the C smoke tests cover both paths with more than eight initializer values.
 
 `ivlc_add_multiple(..., LC_FREE_KEY)` deliberately clears the source table when
 moving owned keys into a distinct destination.  This avoids the upstream

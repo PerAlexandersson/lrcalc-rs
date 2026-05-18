@@ -199,8 +199,10 @@ across 11 cases, with matching correctness signatures.  The skew rows are near
 parity (`1.006x` and `1.067x`), and Schubert multiplication is faster in Rust
 through Sage (`0.445x`).
 
-Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
-binary via `UPSTREAM_BIN`; see each script's help text before running.
+Benchmark scripts live under `scripts/`.  CLI-oracle scripts usually take
+`UPSTREAM_BIN`; FFI benchmark scripts usually take `UPSTREAM_LIB` or
+`UPSTREAM_LIB_DIR`.  Set `OUT=notes/SAGE_LRCALC_BENCHMARK.md` when intentionally
+refreshing the tracked Sage benchmark note.
 
 ## Reference
 

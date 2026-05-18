@@ -12,6 +12,8 @@ use crate::schur::{
     schur_product_fusion_expansion, SchurTerm, SignedSchurTerm,
 };
 use libc::{c_char, c_int, c_longlong, c_void};
+#[cfg(target_arch = "x86_64")]
+use std::arch::naked_asm;
 use std::ffi::CStr;
 use std::mem;
 use std::ptr;
@@ -19,6 +21,32 @@ use std::slice;
 
 unsafe extern "C" {
     static mut optind: c_int;
+    fn lrcalc_c_iv_new_init();
+    fn lrcalc_c_il_new_init();
+    fn lrcalc_c_ivl_new_init();
+}
+
+// Stable Rust cannot define C-variadic functions.  These exported trampolines
+// preserve the caller's ABI state and tail-jump into the C varargs shims.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+#[unsafe(naked)]
+pub unsafe extern "C" fn iv_new_init() {
+    naked_asm!("jmp {}", sym lrcalc_c_iv_new_init);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+#[unsafe(naked)]
+pub unsafe extern "C" fn il_new_init() {
+    naked_asm!("jmp {}", sym lrcalc_c_il_new_init);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+#[unsafe(naked)]
+pub unsafe extern "C" fn ivl_new_init() {
+    naked_asm!("jmp {}", sym lrcalc_c_ivl_new_init);
 }
 
 #[repr(C)]
@@ -674,36 +702,6 @@ pub unsafe extern "C" fn iv_new_copy(v: *const IVector) -> *mut IVector {
     out
 }
 
-#[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub extern "C" fn iv_new_init(
-    length: u32,
-    x0: i32,
-    x1: i32,
-    x2: i32,
-    x3: i32,
-    x4: i32,
-    x5: i32,
-    x6: i32,
-    x7: i32,
-) -> *mut IVector {
-    let v = iv_new(length);
-    if v.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        let data = ivector_data_mut(v);
-        let values = [x0, x1, x2, x3, x4, x5, x6, x7];
-        for (index, value) in values.iter().copied().enumerate().take(length as usize) {
-            *data.add(index) = value;
-        }
-        for index in values.len()..length as usize {
-            *data.add(index) = 0;
-        }
-    }
-    v
-}
-
 /// # Safety
 ///
 /// If `v` is non-null, it must point to a valid mutable `IVector` allocation.
@@ -1251,34 +1249,6 @@ pub unsafe extern "C" fn il_new(sz: usize) -> *mut IList {
 }
 
 #[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn il_new_init(
-    sz: usize,
-    count: usize,
-    x0: c_int,
-    x1: c_int,
-    x2: c_int,
-    x3: c_int,
-    x4: c_int,
-    x5: c_int,
-    x6: c_int,
-    x7: c_int,
-) -> *mut IList {
-    let list = unsafe { il_new(sz) };
-    if list.is_null() {
-        return ptr::null_mut();
-    }
-    let values = [x0, x1, x2, x3, x4, x5, x6, x7];
-    for value in values.iter().copied().take(count) {
-        if unsafe { il_append(list, value) } != 0 {
-            unsafe { il_free(list) };
-            return ptr::null_mut();
-        }
-    }
-    list
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn il_dealloc(lst: *mut IList) {
     if !lst.is_null() {
         unsafe {
@@ -1505,34 +1475,6 @@ pub unsafe extern "C" fn ivl_new(sz: usize) -> *mut IvList {
         return ptr::null_mut();
     }
     lst
-}
-
-#[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn ivl_new_init(
-    sz: usize,
-    count: usize,
-    x0: *mut IVector,
-    x1: *mut IVector,
-    x2: *mut IVector,
-    x3: *mut IVector,
-    x4: *mut IVector,
-    x5: *mut IVector,
-    x6: *mut IVector,
-    x7: *mut IVector,
-) -> *mut IvList {
-    let list = unsafe { ivl_new(sz) };
-    if list.is_null() {
-        return ptr::null_mut();
-    }
-    let values = [x0, x1, x2, x3, x4, x5, x6, x7];
-    for value in values.iter().copied().take(count) {
-        if unsafe { ivl_append(list, value) } != 0 {
-            unsafe { ivl_free(list) };
-            return ptr::null_mut();
-        }
-    }
-    list
 }
 
 #[no_mangle]

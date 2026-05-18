@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-prefix"}"
+PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-sage-bench-prefix"}"
 SAGE_PYTHON="${SAGE_PYTHON:-/workspace/.conda-envs/sage/bin/python}"
-OUT="${OUT:-"$ROOT/notes/SAGE_LRCALC_BENCHMARK.md"}"
+OUT="${OUT:-"$ROOT/target/SAGE_LRCALC_BENCHMARK.md"}"
 TMPDIR="${TMPDIR:-/tmp}"
 PRELOAD_LIB="$PREFIX/lib/liblrcalc.so.2"
 
@@ -26,11 +26,11 @@ trap 'rm -rf "$WORK"' EXIT
 BASELINE_JSON="$WORK/sage-c.json"
 RUST_JSON="$WORK/sage-rust.json"
 
-"$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
+env -u LD_PRELOAD "$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
   --mode sage-c \
   --json-out "$BASELINE_JSON"
 
-LD_PRELOAD="$PRELOAD_LIB${LD_PRELOAD:+:$LD_PRELOAD}" \
+LD_PRELOAD="$PRELOAD_LIB" \
   "$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
     --mode sage-rust \
     --json-out "$RUST_JSON"

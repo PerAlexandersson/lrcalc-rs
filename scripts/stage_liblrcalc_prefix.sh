@@ -17,6 +17,10 @@ esac
 cd "$ROOT"
 timeout 60s nice -n 10 cargo build --release
 
+mkdir -p "$PREFIX"
+exec 9>"$PREFIX/.stage.lock"
+flock 9
+
 rm -rf "$PREFIX/include/lrcalc"
 mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/bin"
 rm -f \

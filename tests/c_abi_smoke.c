@@ -26,6 +26,12 @@ typedef struct {
 int main(void)
 {
   _Static_assert(sizeof(ivlc_iter) == sizeof(expected_ivlc_iter), "ivlc_iter size");
+  _Static_assert(offsetof(ivlc_iter, index) == offsetof(expected_ivlc_iter, index),
+                 "ivlc_iter index offset");
+  _Static_assert(sizeof(((ivlc_iter *)0)->index) == sizeof(size_t),
+                 "ivlc_iter index type");
+  _Static_assert(sizeof(((ivlc_iter *)0)->i) == sizeof(size_t),
+                 "ivlc_iter i type");
   _Static_assert(offsetof(ivlc_iter, i) == offsetof(expected_ivlc_iter, i), "ivlc_iter i");
 
   ivector *one = iv_new_init(1, 1);

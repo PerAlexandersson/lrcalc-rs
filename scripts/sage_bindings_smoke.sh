@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-prefix"}"
+PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-sage-prefix"}"
 SAGE_PYTHON="${SAGE_PYTHON:-/workspace/.conda-envs/sage/bin/python}"
 PRELOAD_LIB="$PREFIX/lib/liblrcalc.so.2"
 

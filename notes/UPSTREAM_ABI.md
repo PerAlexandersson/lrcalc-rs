@@ -58,15 +58,17 @@ Implemented in Rust:
 3. Partition helpers, quantum printing helpers, permutation/string helpers,
    Schubert functions, Maple printing helpers, and `optim_*`/`sksh_*` helpers.
 4. Compatibility headers under `include/lrcalc/`, including the public
-   allocator and template headers.  The staged concrete headers expose
-   source-level variadic `*_new_init` constructors with arbitrary arity.
+   allocator and template headers.  The `*_new_init` constructors are true
+   exported C-variadic symbols, and the staged concrete headers also expose
+   source-level variadic wrappers for rebuilt C callers.
 5. `lrcalc` and `schubmult` CLI commands.  The staged prefix installs both
    binaries next to the library.
 
 Verified smoke coverage:
 
 1. `scripts/c_abi_smoke.sh` stages headers, shared/static libraries, and CLI
-   binaries, then compiles and runs a C program against the staged prefix.
+   binaries, then compiles and runs C programs against the staged prefix,
+   covering both header-inline and exported-symbol variadic constructors.
 2. `scripts/python_bindings_smoke.sh` rebuilds the upstream Python Cython
    module against the staged Rust prefix.
 3. `scripts/sage_bindings_smoke.sh` validates Sage's wrapper through
