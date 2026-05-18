@@ -117,13 +117,13 @@ For the public-repository and drop-in release checklist, see
 ## Build And Test
 
 ```bash
-timeout 60s nice -n 10 cargo test
-timeout 60s nice -n 10 cargo clippy --all-targets -- -D warnings
-timeout 60s nice -n 10 cargo build --release
-timeout 60s nice -n 10 scripts/c_abi_smoke.sh
-timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
-timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
-timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo build --release
+scripts/c_abi_smoke.sh
+scripts/python_bindings_smoke.sh
+scripts/sage_bindings_smoke.sh
+scripts/sage_lrcalc_bench.sh
 ```
 
 The Rust library target is named `lrcalc`, so release builds should produce
@@ -140,31 +140,31 @@ The Sage smoke script expects a Sage-enabled Python at
 ## Useful Commands
 
 ```bash
-timeout 60s nice -n 10 cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- mult 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -f 3,2 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- mult -q 3,2 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- skew 3 2 1 / 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- tab 2 1 / 1
-timeout 60s nice -n 10 cargo run --bin schubmult -- 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-tableau-hybrid-counts-stats 7 4 2 1 - 4 2 - 5 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-buch-counts 5 3 1 - 3 2 1 - 2 1 - 2 0
-timeout 60s nice -n 10 cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
-timeout 60s nice -n 10 cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-dimension 3 3 2 1 1 - 1 1 - 2 2 1 1 1 1 - 4 3 2 1
-timeout 60s nice -n 10 cargo run --bin lrcalc -- beta-lr-stretch-hvector 5 3 1 - 3 2 1 - 2 1 - 2 0
-timeout 60s nice -n 10 cargo run --release --bin lr_hybrid_bench -- 5 3
-timeout 60s nice -n 10 cargo run --release --bin stretched_dp_bench -- 5 3
-timeout 60s nice -n 10 cargo run --release --bin partial_collapse_probe
-timeout 60s nice -n 10 scripts/lrcoef_ffi_bench.sh 5000 mixed
-timeout 60s nice -n 10 scripts/lrcoef_benchmark_report.sh
-timeout 60s nice -n 10 scripts/skew_kostka_ffi_bench.sh 1000
-timeout 60s nice -n 10 scripts/schur_schubert_ffi_bench.sh 500
+cargo run --bin lrcalc -- coef 3 2 1 - 2 1 - 2 1
+cargo run --bin lrcalc -- mult 2 1 - 2 1
+cargo run --bin lrcalc -- mult -f 3,2 2 1 - 2 1
+cargo run --bin lrcalc -- mult -q 3,2 2 1 - 2 1
+cargo run --bin lrcalc -- skew 3 2 1 / 2 1
+cargo run --bin lrcalc -- tab 2 1 / 1
+cargo run --bin schubmult -- 2 1 - 2 1
+cargo run --bin lrcalc -- lr-gt 3 2 1 - 2 1 - 2 1
+cargo run --bin lrcalc -- lr-gt-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
+cargo run --bin lrcalc -- lr-tableau-hybrid-stats 7 4 2 1 - 4 2 - 5 2 1
+cargo run --bin lrcalc -- lr-tableau-hybrid-counts-stats 7 4 2 1 - 4 2 - 5 2 1
+cargo run --bin lrcalc -- lr-buch-counts 3 2 1 - 2 1 - 2 1
+cargo run --bin lrcalc -- beta-lr-buch-counts 5 3 1 - 3 2 1 - 2 1 - 2 0
+cargo run --bin lrcalc -- kostka-fast 3 2 1 - 2 2 2
+cargo run --bin lrcalc -- skew-kostka-fast 5 3 1 - 3 2 1 - 2 1
+cargo run --bin lrcalc -- lr-stretch-hvector 3 2 1 - 2 1 - 2 1
+cargo run --bin lrcalc -- beta-lr-stretch-dimension 3 3 2 1 1 - 1 1 - 2 2 1 1 1 1 - 4 3 2 1
+cargo run --bin lrcalc -- beta-lr-stretch-hvector 5 3 1 - 3 2 1 - 2 1 - 2 0
+cargo run --release --bin lr_hybrid_bench -- 5 3
+cargo run --release --bin stretched_dp_bench -- 5 3
+cargo run --release --bin partial_collapse_probe
+scripts/lrcoef_ffi_bench.sh 5000 mixed
+scripts/lrcoef_benchmark_report.sh
+scripts/skew_kostka_ffi_bench.sh 1000
+scripts/schur_schubert_ffi_bench.sh 500
 ```
 
 Current `lr_hybrid_bench -- 5 3` result: the production tableau full-count
