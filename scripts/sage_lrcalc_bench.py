@@ -218,6 +218,15 @@ def markdown_cell(text: Any) -> str:
 def compare_results(args: argparse.Namespace) -> None:
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
     rust = json.loads(Path(args.rust).read_text(encoding="utf-8"))
+    if baseline.get("env", {}).get("LD_PRELOAD"):
+        raise SystemExit("baseline run unexpectedly had LD_PRELOAD set")
+    if not rust.get("env", {}).get("LD_PRELOAD"):
+        raise SystemExit("Rust run did not record LD_PRELOAD")
+    if not rust.get("loaded_liblrcalc"):
+        raise SystemExit("Rust run did not load any liblrcalc")
+    if rust.get("loaded_liblrcalc") == baseline.get("loaded_liblrcalc"):
+        raise SystemExit("baseline and Rust runs loaded the same liblrcalc")
+
     baseline_cases = {case["name"]: case for case in baseline["cases"]}
     rust_cases = {case["name"]: case for case in rust["cases"]}
 

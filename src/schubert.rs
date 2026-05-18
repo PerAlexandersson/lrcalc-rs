@@ -4,7 +4,7 @@
 //! `schublib.c`, using owned vectors and maps internally instead of C
 //! `ivlincomb` storage.
 
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 
 pub type LinearCombination = BTreeMap<Vec<i32>, i32>;
 const MAX_STRING_CLASSES: usize = 1_000_000;
@@ -461,12 +461,21 @@ fn add_term(
     if coefficient == 0 {
         return Ok(());
     }
-    let entry = out.entry(key.clone()).or_insert(0);
-    *entry = entry
-        .checked_add(coefficient)
-        .ok_or(SchubertError::ArithmeticOverflow)?;
-    if *entry == 0 {
-        out.remove(&key);
+    match out.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(coefficient);
+        }
+        Entry::Occupied(mut entry) => {
+            let new_value = entry
+                .get()
+                .checked_add(coefficient)
+                .ok_or(SchubertError::ArithmeticOverflow)?;
+            if new_value == 0 {
+                entry.remove_entry();
+            } else {
+                *entry.get_mut() = new_value;
+            }
+        }
     }
     Ok(())
 }
