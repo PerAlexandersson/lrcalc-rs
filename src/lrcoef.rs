@@ -2457,8 +2457,8 @@ fn beta_lrcoef_accumulate_content_packed(
     let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
 
     loop {
-        if x > boxes[pos].max {
-            x = boxes[pos].max;
+        while x > boxes[pos].max {
+            x -= 1;
         }
         while x > 0 && x > above && !beta_slack_label_allowed(x as usize, &yamanouchi_slack) {
             x -= 1;
@@ -2538,8 +2538,8 @@ fn beta_lrcoef_accumulate_content_vec(
     let mut x = i32::try_from(shape.label_count).map_err(|_| LrCoefError::ArithmeticOverflow)?;
 
     loop {
-        if x > boxes[pos].max {
-            x = boxes[pos].max;
+        while x > boxes[pos].max {
+            x -= 1;
         }
         while x > 0 && x > above && !beta_slack_label_allowed(x as usize, &yamanouchi_slack) {
             x -= 1;

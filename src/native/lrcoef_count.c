@@ -532,8 +532,8 @@ int32_t lrcalc_native_beta_content_expand_i64(
   x = (int32_t)label_count;
 
   while (1) {
-    if (x > T[pos].max)
-      x = T[pos].max;
+    while (x > T[pos].max)
+      x--;
     while (x > 0 && x > above && !beta_label_allowed((uintptr_t)x, slack))
       x--;
 
