@@ -610,6 +610,9 @@ static int32_t lrcalc_native_beta_content_expand_lrit_i64(
   terms.len = 0;
   terms.resize_at = 0;
 
+  if (skew_size > 64)
+    return -3;
+
   trimmed_beta_len = part_length(beta, beta_len);
   if (trimmed_beta_len > label_count)
     return -3;
