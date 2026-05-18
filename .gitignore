@@ -25,3 +25,4 @@ __pycache__/
 # Local agent handoff/state notes.
 /AGENTS.md
 /HANDOFF.md
+/PUBLISHING.md

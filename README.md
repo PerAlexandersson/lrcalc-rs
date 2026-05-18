@@ -111,8 +111,6 @@ See [LICENSE](LICENSE) for the project notice and attribution notes, and
 ## Repository Status
 
 For contribution workflow notes, see [CONTRIBUTING.md](CONTRIBUTING.md).
-For the public-repository and drop-in release checklist, see
-[PUBLISHING.md](PUBLISHING.md).
 
 ## Build And Test
 
