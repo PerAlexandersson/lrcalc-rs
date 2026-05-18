@@ -87,6 +87,12 @@ Sage 10.8 was installed from conda-forge on 2026-05-18:
 `lrcoef`, `mult`, `skew`, `coprod`, Schubert multiplication, and LR-tableau
 iteration.
 
+`timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh` passed on
+2026-05-18 and wrote `notes/SAGE_LRCALC_BENCHMARK.md`.  It compares Sage's
+wrapper using conda-forge C `liblrcalc` against the same wrapper using the Rust
+`liblrcalc` via `LD_PRELOAD`.  Current geometric mean is `0.951x` Rust/Sage-C,
+median is `1.049x`, and correctness signatures match on all 11 cases.
+
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
 `mult 2 1 - 2 1` and `skew 3 2 1 / 2 1`.  CLI line order is not yet treated

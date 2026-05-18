@@ -116,6 +116,7 @@ timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
 timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
+timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh
 ```
 
 The Rust library target is named `lrcalc`, so release builds should produce
