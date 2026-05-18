@@ -23,4 +23,5 @@ __pycache__/
 .env.*
 
 # Local agent handoff/state notes.
+/AGENTS.md
 /HANDOFF.md
