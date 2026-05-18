@@ -7,9 +7,11 @@ use crate::schubert::{
 };
 use crate::schur::{
     fusion_reduce_values, schur_coproduct_expansion, schur_product_expansion,
-    schur_product_fusion_expansion, schur_skew_expansion, SchurTerm, SignedSchurTerm,
+    schur_product_fusion_expansion, visit_schur_skew_expansion_with_len, SchurTerm,
+    SignedSchurTerm,
 };
 use libc::{c_char, c_int, c_longlong, c_void};
+use std::cell::Cell;
 use std::ffi::CStr;
 use std::mem;
 use std::ptr;
@@ -293,6 +295,56 @@ unsafe fn ivlc_from_terms(terms: &[SchurTerm], key_len: usize) -> *mut IvLinComb
         }
     }
     lc
+}
+
+unsafe fn ivlc_from_skew_expansion_direct(
+    outer: &[i32],
+    inner: &[i32],
+    rows: c_int,
+    key_len: usize,
+) -> *mut IvLinComb {
+    let lc = Cell::new(ptr::null_mut());
+    let failed = Cell::new(false);
+    let result = visit_schur_skew_expansion_with_len(
+        outer,
+        inner,
+        rows,
+        |term_count| {
+            let initial_elts = u32::try_from(term_count.saturating_add(1))
+                .unwrap_or(u32::MAX)
+                .max(IVLC_ARRAY_SZ);
+            let new_lc = ivlc_new(IVLC_HASHTABLE_SZ, initial_elts);
+            lc.set(new_lc);
+            if new_lc.is_null() {
+                failed.set(true);
+            }
+        },
+        |partition, coefficient| {
+            if failed.get() {
+                return;
+            }
+            let Ok(value) = i32::try_from(coefficient) else {
+                failed.set(true);
+                return;
+            };
+            let key = unsafe { ivector_from_partition(&partition, key_len) };
+            if key.is_null() {
+                failed.set(true);
+                return;
+            }
+            let hash = unsafe { iv_hash(key) } as u32;
+            if unsafe { ivlc_add_element(lc.get(), value, key, hash, LC_FREE_ZERO) } != 0 {
+                failed.set(true);
+            }
+        },
+    );
+    if result.is_err() || failed.get() {
+        if !lc.get().is_null() {
+            unsafe { ivlc_free_all(lc.get()) };
+        }
+        return ptr::null_mut();
+    }
+    lc.get()
 }
 
 unsafe fn ivlc_from_signed_terms(terms: &[SignedSchurTerm], key_len: usize) -> *mut IvLinComb {
@@ -4014,12 +4066,8 @@ pub unsafe extern "C" fn schur_skew(
     }
     let outer_values = unsafe { ivector_values(outer) };
     let inner_values = unsafe { ivector_values(inner) };
-    let terms = match schur_skew_expansion(outer_values, inner_values, rows) {
-        Ok(terms) => terms,
-        Err(_) => return ptr::null_mut(),
-    };
     let key_len = default_skew_key_len(outer_values, inner_values, rows, partsz);
-    unsafe { ivlc_from_terms(&terms, key_len) }
+    unsafe { ivlc_from_skew_expansion_direct(outer_values, inner_values, rows, key_len) }
 }
 
 /// # Safety

@@ -255,21 +255,56 @@ pub fn beta_lr_content_expansion(
     beta: &[i32],
     max_labels: Option<usize>,
 ) -> Result<Vec<BetaLrContentTerm>, LrCoefError> {
+    let mut terms = Vec::new();
+    visit_beta_lr_content_expansion(outer, inner, beta, max_labels, |content, coefficient| {
+        terms.push(BetaLrContentTerm {
+            content: content.to_vec(),
+            coefficient,
+        });
+    })?;
+    terms.sort_by(|left, right| left.content.cmp(&right.content));
+    Ok(terms)
+}
+
+pub(crate) fn visit_beta_lr_content_expansion<F>(
+    outer: &[i32],
+    inner: &[i32],
+    beta: &[i32],
+    max_labels: Option<usize>,
+    visit: F,
+) -> Result<(), LrCoefError>
+where
+    F: FnMut(&[i32], u128),
+{
+    visit_beta_lr_content_expansion_with_len(outer, inner, beta, max_labels, |_| {}, visit)
+}
+
+pub(crate) fn visit_beta_lr_content_expansion_with_len<B, F>(
+    outer: &[i32],
+    inner: &[i32],
+    beta: &[i32],
+    max_labels: Option<usize>,
+    begin: B,
+    mut visit: F,
+) -> Result<(), LrCoefError>
+where
+    B: FnOnce(usize),
+    F: FnMut(&[i32], u128),
+{
     let Some(shape) = prepare_beta_expansion_shape(outer, inner, beta, max_labels)? else {
-        return Ok(Vec::new());
+        begin(0);
+        return Ok(());
     };
     if shape.skew_size == 0 {
-        return Ok(vec![BetaLrContentTerm {
-            content: Vec::new(),
-            coefficient: 1,
-        }]);
+        begin(1);
+        visit(&[], 1);
+        return Ok(());
     }
 
     let terms = beta_lrcoef_content_accumulator(&shape)?;
-
-    let mut terms = terms.into_terms();
-    terms.sort_by(|left, right| left.content.cmp(&right.content));
-    Ok(terms)
+    begin(terms.len());
+    terms.visit_terms(visit);
+    Ok(())
 }
 
 enum ContentAccumulator {
@@ -306,6 +341,13 @@ impl ContentAccumulator {
             .map_or_else(|| Self::VecMap(HashMap::new()), Self::Packed)
     }
 
+    fn len(&self) -> usize {
+        match self {
+            Self::Packed(packed) => packed.terms.len,
+            Self::VecMap(terms) => terms.len(),
+        }
+    }
+
     #[cfg(test)]
     fn add(&mut self, content: &[i32]) -> Result<(), LrCoefError> {
         match self {
@@ -324,30 +366,39 @@ impl ContentAccumulator {
         }
     }
 
-    fn into_terms(self) -> Vec<BetaLrContentTerm> {
+    fn visit_terms<F>(self, mut visit: F)
+    where
+        F: FnMut(&[i32], u128),
+    {
         match self {
             Self::Packed(packed) => {
                 let bits = packed.bits;
                 let len_bits = packed.len_bits;
                 let len_mask = packed.len_mask;
                 let value_mask = packed.value_mask;
-                packed
-                    .terms
-                    .into_entries()
-                    .map(|(key, coefficient)| BetaLrContentTerm {
-                        content: unpack_packed_content(key, bits, len_bits, len_mask, value_mask),
-                        coefficient,
-                    })
-                    .collect()
+                for (key, coefficient) in packed.terms.into_entries() {
+                    let content = unpack_packed_content(key, bits, len_bits, len_mask, value_mask);
+                    visit(&content, coefficient);
+                }
             }
-            Self::VecMap(terms) => terms
-                .into_iter()
-                .map(|(content, coefficient)| BetaLrContentTerm {
-                    content,
-                    coefficient,
-                })
-                .collect(),
+            Self::VecMap(terms) => {
+                for (content, coefficient) in terms {
+                    visit(&content, coefficient);
+                }
+            }
         }
+    }
+
+    #[cfg(test)]
+    fn into_terms(self) -> Vec<BetaLrContentTerm> {
+        let mut terms = Vec::new();
+        self.visit_terms(|content, coefficient| {
+            terms.push(BetaLrContentTerm {
+                content: content.to_vec(),
+                coefficient,
+            });
+        });
+        terms
     }
 }
 

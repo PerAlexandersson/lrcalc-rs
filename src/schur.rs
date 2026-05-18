@@ -4,7 +4,7 @@
 //! disconnected skew shape.  Skew expansion uses the variable-content beta
 //! tableau enumerator, which accumulates all output contents in one search.
 
-use crate::lrcoef::{beta_lr_content_expansion, LrCoefError};
+use crate::lrcoef::{visit_beta_lr_content_expansion_with_len, LrCoefError};
 use crate::partition::Partition;
 use std::collections::BTreeMap;
 
@@ -60,15 +60,52 @@ pub fn schur_skew_expansion(
     inner: &[i32],
     rows: i32,
 ) -> Result<Vec<SchurTerm>, SchurExpansionError> {
+    let mut terms = Vec::new();
+    visit_schur_skew_expansion(outer, inner, rows, |partition, coefficient| {
+        terms.push(SchurTerm {
+            partition,
+            coefficient,
+        });
+    })?;
+    terms.sort_by(|left, right| right.partition.cmp(&left.partition));
+
+    Ok(terms)
+}
+
+pub(crate) fn visit_schur_skew_expansion<F>(
+    outer: &[i32],
+    inner: &[i32],
+    rows: i32,
+    visit: F,
+) -> Result<(), SchurExpansionError>
+where
+    F: FnMut(Vec<i32>, u128),
+{
+    visit_schur_skew_expansion_with_len(outer, inner, rows, |_| {}, visit)
+}
+
+pub(crate) fn visit_schur_skew_expansion_with_len<B, F>(
+    outer: &[i32],
+    inner: &[i32],
+    rows: i32,
+    begin: B,
+    mut visit: F,
+) -> Result<(), SchurExpansionError>
+where
+    B: FnOnce(usize),
+    F: FnMut(Vec<i32>, u128),
+{
     validate_partition(outer)?;
     validate_partition(inner)?;
     let outer = trim_trailing_zeroes(outer);
     let inner = trim_trailing_zeroes(inner);
     if !contains_partition(&outer, &inner) {
-        return Ok(Vec::new());
+        begin(0);
+        return Ok(());
     }
     let Some(optimized) = optimize_skew_shape(&outer, &inner, rows)? else {
-        return Ok(Vec::new());
+        begin(0);
+        return Ok(());
     };
     let max_labels = if optimized.requested_rows >= 0 {
         Some(
@@ -78,21 +115,18 @@ pub fn schur_skew_expansion(
     } else {
         None
     };
-    let mut terms = beta_lr_content_expansion(
+    visit_beta_lr_content_expansion_with_len(
         &optimized.outer,
         &optimized.inner,
         &optimized.fixed_content,
         max_labels,
-    )?
-    .into_iter()
-    .map(|term| SchurTerm {
-        partition: add_content_vectors(&optimized.fixed_content, &term.content),
-        coefficient: term.coefficient,
-    })
-    .collect::<Vec<_>>();
-    terms.sort_by(|left, right| right.partition.cmp(&left.partition));
-
-    Ok(terms)
+        begin,
+        |content, coefficient| {
+            let partition = add_content_vectors(&optimized.fixed_content, content);
+            visit(partition, coefficient);
+        },
+    )?;
+    Ok(())
 }
 
 pub fn schur_coproduct_expansion(
