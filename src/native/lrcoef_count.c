@@ -15,6 +15,13 @@ typedef struct {
 } lrcoef_box;
 
 typedef struct {
+  int32_t value;
+  int32_t max;
+  int32_t above;
+  int32_t right;
+} lrit_content_box;
+
+typedef struct {
   int32_t cont;
   int32_t supply;
 } lrcoef_content;
@@ -30,6 +37,8 @@ static inline int32_t part_entry(const int32_t *part, uintptr_t len, uintptr_t i
 {
   return (index < len) ? part[index] : 0;
 }
+
+static uintptr_t part_length(const int32_t *part, uintptr_t len);
 
 static lrcoef_content *new_content(const int32_t *content, uintptr_t content_len)
 {
@@ -426,6 +435,266 @@ static int unpack_packed_key(
     packed_key key,
     const packed_content_state *state,
     int32_t *content,
+    uintptr_t *content_len);
+
+static lrit_content_box *new_lrit_content_skewtab(
+    const int32_t *outer,
+    uintptr_t outer_len,
+    const int32_t *inner,
+    uintptr_t inner_len,
+    uintptr_t beta_len,
+    uintptr_t label_count,
+    int32_t skew_size)
+{
+  lrit_content_box *array;
+  uintptr_t trimmed_outer;
+  uintptr_t trimmed_inner;
+  uintptr_t array_len;
+  int32_t out0;
+  int32_t inn0;
+  int32_t out1;
+  int32_t inn1;
+  int32_t out2;
+  int32_t maxdepth;
+  int32_t s;
+  int32_t r;
+
+  trimmed_outer = part_length(outer, outer_len);
+  trimmed_inner = part_length(inner, inner_len);
+  if (trimmed_inner > trimmed_outer)
+    trimmed_inner = trimmed_outer;
+  if (trimmed_outer > (uintptr_t)INT32_MAX ||
+      trimmed_inner > (uintptr_t)INT32_MAX ||
+      beta_len > (uintptr_t)INT32_MAX ||
+      label_count > (uintptr_t)INT32_MAX)
+    return NULL;
+  if (skew_size < 0 || (uintptr_t)skew_size > (UINTPTR_MAX / sizeof(lrit_content_box)) - 2)
+    return NULL;
+
+  array_len = (uintptr_t)skew_size + 2;
+  array = (lrit_content_box *)malloc(array_len * sizeof(lrit_content_box));
+  if (array == NULL)
+    return NULL;
+
+  maxdepth = (int32_t)beta_len;
+  for (r = 0; r < (int32_t)trimmed_outer; r++) {
+    int32_t rowsz = outer[r] - part_entry(inner, trimmed_inner, (uintptr_t)r);
+    if (rowsz > 0)
+      maxdepth++;
+  }
+  if ((int32_t)label_count > maxdepth)
+    label_count = (uintptr_t)maxdepth;
+
+  s = 0;
+  out1 = 0;
+  out0 = (trimmed_outer == 0) ? 0 : outer[0];
+  inn0 = (trimmed_outer == 0) ? out0 :
+      (trimmed_outer <= trimmed_inner ? inner[trimmed_outer - 1] : 0);
+  for (r = (int32_t)trimmed_outer; r-- > 0;) {
+    int32_t c;
+
+    out2 = out1;
+    inn1 = inn0;
+    out1 = outer[r];
+    inn0 = (r == 0) ? out0 :
+        ((uintptr_t)r <= trimmed_inner ? inner[(uintptr_t)r - 1] : 0);
+    if (inn1 < out1)
+      maxdepth--;
+    for (c = inn1; c < out1; c++) {
+      lrit_content_box *box = array + s;
+      int32_t max_value;
+
+      box->right = (c + 1 < out1) ? s + 1 : skew_size + 1;
+      box->above = (c >= inn0) ? s + out1 - inn0 : skew_size;
+      max_value = (c < out2) ? array[s - out2 + inn1].max - 1 : (int32_t)label_count - 1;
+      box->max = (max_value < maxdepth) ? max_value : maxdepth;
+      box->value = 0;
+      s++;
+    }
+  }
+  if (s != skew_size) {
+    free(array);
+    return NULL;
+  }
+  array[skew_size].value = -1;
+  array[skew_size + 1].value = (int32_t)label_count - 1;
+  return array;
+}
+
+static int lrit_content_minimal_fill(
+    lrit_content_box *array,
+    int32_t *content,
+    packed_content_state *state,
+    int32_t skew_size)
+{
+  int32_t s;
+
+  for (s = skew_size; s-- > 0;) {
+    lrit_content_box *box = array + s;
+    int32_t x = array[box->above].value + 1;
+    if (x > box->max)
+      return 0;
+    box->value = x;
+    content[x]++;
+    packed_state_place(state, (uintptr_t)x + 1);
+  }
+  return 1;
+}
+
+static int lrit_content_next(
+    lrit_content_box *array,
+    int32_t *content,
+    packed_content_state *state,
+    int32_t skew_size)
+{
+  lrit_content_box *box;
+  lrit_content_box *box_bound = array + skew_size;
+
+  for (box = array; box != box_bound; box++) {
+    int32_t max_value = array[box->right].value;
+    int32_t x;
+
+    if (max_value > box->max)
+      max_value = box->max;
+    x = box->value;
+    content[x]--;
+    packed_state_unplace(state, (uintptr_t)x + 1);
+    x++;
+    while (x <= max_value && content[x] == content[x - 1])
+      x++;
+    if (x > max_value)
+      continue;
+
+    box->value = x;
+    content[x]++;
+    packed_state_place(state, (uintptr_t)x + 1);
+    while (box != array) {
+      box--;
+      x = array[box->above].value + 1;
+      box->value = x;
+      content[x]++;
+      packed_state_place(state, (uintptr_t)x + 1);
+    }
+    return 1;
+  }
+
+  return 0;
+}
+
+static int32_t lrcalc_native_beta_content_expand_lrit_i64(
+    const int32_t *outer,
+    uintptr_t outer_len,
+    const int32_t *inner,
+    uintptr_t inner_len,
+    const int32_t *beta,
+    uintptr_t beta_len,
+    uintptr_t label_count,
+    int32_t skew_size,
+    lrcalc_content_begin_fn begin,
+    lrcalc_content_emit_fn emit,
+    void *ctx)
+{
+  uintptr_t trimmed_beta_len;
+  uintptr_t effective_labels;
+  uintptr_t i;
+  lrit_content_box *array = NULL;
+  int32_t *prefix_content = NULL;
+  int32_t *content = NULL;
+  packed_content_table terms;
+  packed_content_state state;
+  int32_t status;
+
+  terms.keys = NULL;
+  terms.values = NULL;
+  terms.capacity = 0;
+  terms.len = 0;
+  terms.resize_at = 0;
+
+  trimmed_beta_len = part_length(beta, beta_len);
+  if (trimmed_beta_len > label_count)
+    return -3;
+
+  effective_labels = label_count;
+  if (effective_labels < trimmed_beta_len)
+    return -3;
+  if (effective_labels == 0)
+    return -3;
+
+  if (packed_state_init(&state, skew_size, effective_labels) != 0)
+    return -2;
+  if (packed_table_init(&terms, (uintptr_t)skew_size, effective_labels) != 0)
+    return -1;
+
+  prefix_content = (int32_t *)calloc(effective_labels, sizeof(int32_t));
+  if (prefix_content == NULL) {
+    packed_table_dealloc(&terms);
+    return -1;
+  }
+  for (i = 0; i < effective_labels; i++)
+    prefix_content[i] = part_entry(beta, beta_len, i);
+
+  array = new_lrit_content_skewtab(
+      outer,
+      outer_len,
+      inner,
+      inner_len,
+      trimmed_beta_len,
+      effective_labels,
+      skew_size);
+  if (array == NULL) {
+    status = -1;
+    goto cleanup;
+  }
+
+  if (lrit_content_minimal_fill(array, prefix_content, &state, skew_size)) {
+    do {
+      if (state.overflow_labels != 0) {
+        status = -2;
+        goto cleanup;
+      }
+      status = packed_table_add(&terms, state.key);
+      if (status != 0)
+        goto cleanup;
+    } while (lrit_content_next(array, prefix_content, &state, skew_size));
+  }
+
+  content = (int32_t *)malloc(state.max_len * sizeof(int32_t));
+  if (content == NULL && state.max_len != 0) {
+    status = -1;
+    goto cleanup;
+  }
+  if (begin(ctx, terms.len) != 0) {
+    status = -1;
+    goto cleanup;
+  }
+  for (i = 0; i < terms.capacity; i++) {
+    uintptr_t content_len;
+
+    if (terms.values[i] == 0)
+      continue;
+    if (unpack_packed_key(terms.keys[i], &state, content, &content_len) != 0) {
+      status = -1;
+      goto cleanup;
+    }
+    if (emit(ctx, content, content_len, (int64_t)terms.values[i]) != 0) {
+      status = -1;
+      goto cleanup;
+    }
+  }
+  status = 0;
+
+cleanup:
+  free(content);
+  free(array);
+  free(prefix_content);
+  packed_table_dealloc(&terms);
+  return status;
+}
+
+static int unpack_packed_key(
+    packed_key key,
+    const packed_content_state *state,
+    int32_t *content,
     uintptr_t *content_len)
 {
   uintptr_t len = (uintptr_t)(key & state->len_mask);
@@ -504,6 +773,21 @@ int32_t lrcalc_native_beta_content_expand_i64(
   }
   if (outer_len == 0 || label_count == 0)
     return -1;
+
+  status = lrcalc_native_beta_content_expand_lrit_i64(
+      outer,
+      outer_len,
+      inner,
+      inner_len,
+      beta,
+      beta_len,
+      label_count,
+      skew_size,
+      begin,
+      emit,
+      ctx);
+  if (status != -3)
+    return status;
 
   status = packed_state_init(&state, skew_size, label_count);
   if (status != 0)
