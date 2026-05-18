@@ -2939,7 +2939,16 @@ pub unsafe extern "C" fn lrit_next(lrit: *mut LrTabIter) {
     }
 }
 
-unsafe fn lrit_next_fast_raw(array: *mut LritBox, cont_values: *mut i32, size: usize) -> bool {
+unsafe fn lrit_next_fast(lrit: *mut LrTabIter) -> bool {
+    let size = unsafe { (*lrit).size as usize };
+    let array = unsafe { ptr::addr_of_mut!((*lrit).array).cast::<LritBox>() };
+    let cont = unsafe { (*lrit).cont };
+    if cont.is_null() {
+        unsafe { (*lrit).size = -1 };
+        return false;
+    }
+    let cont_values = unsafe { ivector_data_mut(cont) };
+
     for index in 0..size {
         let box_ptr = unsafe { array.add(index) };
         let right = unsafe { (*box_ptr).right as usize };
@@ -2978,6 +2987,7 @@ unsafe fn lrit_next_fast_raw(array: *mut LritBox, cont_values: *mut i32, size: u
         return true;
     }
 
+    unsafe { (*lrit).size = -1 };
     false
 }
 
@@ -2989,22 +2999,13 @@ unsafe fn lrit_count_fast(lrit: *mut LrTabIter) -> *mut IvLinComb {
     if lc.is_null() {
         return ptr::null_mut();
     }
-    let size = unsafe { (*lrit).size };
-    let cont = unsafe { (*lrit).cont };
-    if cont.is_null() {
-        unsafe { ivlc_free_all(lc) };
-        return ptr::null_mut();
-    }
-    let array = unsafe { ptr::addr_of_mut!((*lrit).array).cast::<LritBox>() };
-    let cont_values = unsafe { ivector_data_mut(cont) };
-    let size = size as usize;
     while unsafe { (*lrit).size >= 0 } {
+        let cont = unsafe { (*lrit).cont };
         if unsafe { ivlc_add_content_one_fast(lc, cont) } != 0 {
             unsafe { ivlc_free_all(lc) };
             return ptr::null_mut();
         }
-        if !unsafe { lrit_next_fast_raw(array, cont_values, size) } {
-            unsafe { (*lrit).size = -1 };
+        if !unsafe { lrit_next_fast(lrit) } {
             break;
         }
     }
