@@ -310,11 +310,11 @@ pub(crate) fn fusion_reduce_values(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct OptimizedSkewShape {
-    outer: Vec<i32>,
-    inner: Vec<i32>,
-    fixed_content: Vec<i32>,
-    requested_rows: i32,
+pub(crate) struct OptimizedSkewShape {
+    pub(crate) outer: Vec<i32>,
+    pub(crate) inner: Vec<i32>,
+    pub(crate) fixed_content: Vec<i32>,
+    pub(crate) requested_rows: i32,
 }
 
 fn validate_partition(partition: &[i32]) -> Result<(), SchurExpansionError> {
@@ -434,7 +434,7 @@ fn contains_partition(outer: &[i32], inner: &[i32]) -> bool {
         .all(|(index, &part)| part <= outer.get(index).copied().unwrap_or(0))
 }
 
-fn optimize_skew_shape(
+pub(crate) fn optimize_skew_shape(
     outer: &[i32],
     inner: &[i32],
     requested_rows: i32,
