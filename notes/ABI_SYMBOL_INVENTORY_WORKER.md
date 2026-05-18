@@ -55,9 +55,10 @@ Concrete functions from `vector.tpl.h`:
 - `iv_print`
 - `iv_printnl`
 
-Current Rust export check: `iv_cmp`, `iv_free`, `iv_hash`, `iv_new`,
-`iv_new_copy`, `iv_new_zero`, `iv_set_zero`, `iv_sum`, `schur_lrcoef`, and
-`lrcalc_new_abi_version` exist.
+Current Rust export check after the ABI hardening pass: release `nm -D` has no
+missing upstream exported symbols; the only intentional extra symbol is
+`lrcalc_new_abi_version`.  The concrete staged headers also provide
+source-level variadic `*_new_init` constructors for arbitrary-arity C calls.
 
 ### `ilist.h`
 
@@ -373,9 +374,9 @@ The first coefficient target is implemented in `src/lrcoef.rs`.
   `src/lr_gt.rs`, `src/lr_signed.rs`, `src/kostka_fast.rs`,
   and `src/lr_ehrhart.rs`.
 
-Next ABI step: expose `lrcoef_count` or keep it internal, then implement
-`ivlincomb` so `schur_skew` and `schur_mult` can return real linear
-combinations.
+Current ABI follow-up: keep the exported-symbol inventory in CI, broaden the C
+smoke corpus for iterator and printing edge cases, and decide whether exact CLI
+output order must follow upstream hash iteration.
 
 ## Benchmark And Test Plan
 

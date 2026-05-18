@@ -248,7 +248,7 @@ fn monk_add(
             )?;
         }
 
-        if i >= n + 1 {
+        if i > n {
             let mut u = extend_permutation(w, i + 1)?;
             u[i - 1] = i32::try_from(i + 1).map_err(|_| SchubertError::ArithmeticOverflow)?;
             u[i] = i32::try_from(i).map_err(|_| SchubertError::ArithmeticOverflow)?;

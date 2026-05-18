@@ -555,12 +555,12 @@ pub(crate) fn optimize_skew_shape(
         }
 
         let mut component_size = 0i64;
-        for row in r2_top..r1_bot {
+        for (row, &outer_row) in outer.iter().enumerate().take(r1_bot).skip(r2_top) {
             let mut left = part_entry_i32(inner, row);
             if left < c1 {
                 left = c1;
             }
-            let mut right = outer[row];
+            let mut right = outer_row;
             if right > c2 {
                 right = c2;
             }
@@ -649,7 +649,6 @@ pub(crate) fn optimize_skew_shape(
 
     let bot = partial.bot;
     let col_shift = partial.col;
-    drop(partial);
 
     out.truncate(bot);
     inn.truncate(bot);

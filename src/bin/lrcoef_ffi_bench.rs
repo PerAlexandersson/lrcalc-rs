@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use lrcalc::lrcoef::lrcoef_i64;
 use std::ffi::{CStr, CString};
 use std::hint::black_box;
@@ -178,7 +180,7 @@ fn print_usage() {
 fn run_benchmark(repeat: usize, suite: &str, cases: &[Case], upstream: &Upstream) -> BenchResult {
     for case in cases {
         let rust_value = rust_lrcoef(case);
-        let c_value = c_lrcoef(&upstream, case);
+        let c_value = c_lrcoef(upstream, case);
         if rust_value != c_value {
             eprintln!("mismatch: {}", case.label);
             eprintln!("outer:   {:?}", case.outer);

@@ -170,7 +170,7 @@ where
     points.push((0, BigRational::one()));
     sample_points.push((0, BigInt::one()));
 
-    let sign_positive = dimension % 2 == 0;
+    let sign_positive = dimension.is_multiple_of(2);
     let mut stretch = 1u64;
     while points.len() <= dimension {
         let counts = counts_at(stretch)?;

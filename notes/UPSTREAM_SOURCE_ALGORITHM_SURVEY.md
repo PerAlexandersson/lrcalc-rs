@@ -647,8 +647,9 @@ under the notation used immediately above it.
 
 The Rust crate now has several substantial native engines.
 
-- `src/abi.rs`: C-facing `ivector` allocation/copy/hash/sum subset and
-  `schur_lrcoef`.
+- `src/abi.rs`: C-facing ABI surface for vectors, lists, linear combinations,
+  partition helpers, LR-tableau iterators, Schur/fusion operations, Schubert
+  operations, Maple printing helpers, and low-level coefficient functions.
 - `src/lrcoef.rs`: primary Buch-style single LR coefficient implementation,
   including upstream-style compactification, branch-pruned tableau counting,
   relative-interior counts, dimension, and stretch-cache helpers.
@@ -664,19 +665,18 @@ The Rust crate now has several substantial native engines.
 - `src/bin/` and `scripts/`: benchmark harnesses for in-process and upstream-C
   comparisons.
 
-What is still missing:
+What remains for release hardening:
 
-- real `ivlincomb` storage, iterators, and ownership-compatible ABI;
-- Schur product, skew, coproduct, fusion, and quantum ABI functions;
-- LR tableau iterator ABI;
-- Schubert polynomial ABI and `schubmult` command compatibility;
-- installed compatibility headers;
-- C layout/symbol smoke tests and Python/Sage rebuild tests.
+- broader C smoke tests for iterator, ownership-transfer, and printing edge
+  cases;
+- a full Sage rebuild recipe, beyond the current `LD_PRELOAD` smoke test;
+- a final decision on whether CLI term order must exactly follow upstream
+  hash-table iteration.
 
-One concrete ABI issue from the survey remains important: upstream C headers use
-`size_t` for `ivlc_iter.index` and `ivlc_iter.i`, while the Python `.pxd` writes
-`uint32_t`. Full C compatibility should follow the C header; Python
-compatibility may need a dedicated check on 64-bit platforms.
+The concrete ABI issue from the survey has been fixed in the staged headers:
+`ivlc_iter.index` and `ivlc_iter.i` now follow the upstream C header and use
+`size_t`.  Python/Sage smoke tests currently pass through the staged Rust
+prefix.
 
 ## Room For Rust Improvements
 

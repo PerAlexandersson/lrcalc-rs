@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use lrcalc::abi::{
     iv_free, iv_new_zero, lrit_free, lrit_good, lrit_new, lrit_next, IVector, LrTabIter,
 };

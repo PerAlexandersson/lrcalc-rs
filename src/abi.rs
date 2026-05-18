@@ -1,5 +1,7 @@
 //! C ABI types and functions matching the original `lrcalc` headers.
 
+#![allow(clippy::missing_safety_doc)]
+
 use crate::lrcoef::{lrcoef_i64, optim_coef as native_optim_coef, OptimizedCoef};
 use crate::schubert::{
     monk_product, multiply_poly_schubert, multiply_schubert, multiply_schubert_strings,
@@ -2656,9 +2658,7 @@ pub unsafe extern "C" fn lrit_new(
     }
     {
         let cont_values_mut = unsafe { ivector_values_mut(cont) };
-        for row in 0..clen {
-            cont_values_mut[row] = content_values[row];
-        }
+        cont_values_mut[..clen].copy_from_slice(&content_values[..clen]);
         for value in cont_values_mut.iter_mut().skip(clen) {
             *value = 0;
         }
@@ -2977,14 +2977,16 @@ unsafe fn lrit_count_fast(lrit: *mut LrTabIter) -> *mut IvLinComb {
     if lc.is_null() {
         return ptr::null_mut();
     }
-    while unsafe { (*lrit).size >= 0 } {
-        let cont = unsafe { (*lrit).cont };
-        if unsafe { ivlc_add_content_one_fast(lc, cont) } != 0 {
-            unsafe { ivlc_free_all(lc) };
-            return ptr::null_mut();
-        }
-        if !unsafe { lrit_next_fast(lrit) } {
-            break;
+    if unsafe { (*lrit).size >= 0 } {
+        loop {
+            let cont = unsafe { (*lrit).cont };
+            if unsafe { ivlc_add_content_one_fast(lc, cont) } != 0 {
+                unsafe { ivlc_free_all(lc) };
+                return ptr::null_mut();
+            }
+            if !unsafe { lrit_next_fast(lrit) } {
+                break;
+            }
         }
     }
     lc
@@ -4392,9 +4394,8 @@ pub unsafe extern "C" fn sksh_print(
         }
         println!();
     }
-    for row in row0..len {
+    for (row, &out) in outer_values.iter().enumerate().take(len).skip(row0) {
         let inn = inner_values.get(row).copied().unwrap_or(0);
-        let out = outer_values[row];
         for _ in 0..inn {
             print!(" ");
         }
@@ -4445,9 +4446,9 @@ pub unsafe extern "C" fn optim_mult(
         } else {
             (maxrows as usize).saturating_sub(len1)
         };
-        for r in start..len2 {
+        for (r, &right_value) in right.iter().enumerate().take(len2).skip(start) {
             let left_index = maxrows as usize - r - 1;
-            if left[left_index] + right[r] > maxcols {
+            if left[left_index] + right_value > maxcols {
                 return 0;
             }
         }
@@ -4558,21 +4559,22 @@ pub unsafe extern "C" fn optim_fusion(
     let d_usize = d as usize;
     let mut nsh1 = vec![0; rows_usize];
     let mut nsh2 = vec![0; rows_usize];
-    for i in 0..rows_usize.saturating_sub(d_usize) {
-        nsh1[i] = left.get(d_usize + i).copied().unwrap_or(0) - sh1d + level;
+    let top_len = rows_usize.saturating_sub(d_usize);
+    for (i, slot) in nsh1.iter_mut().take(top_len).enumerate() {
+        *slot = left.get(d_usize + i).copied().unwrap_or(0) - sh1d + level;
     }
-    for i in 0..d_usize {
-        nsh1[rows_usize - d_usize + i] = left.get(i).copied().unwrap_or(0) - sh1d;
+    for (i, slot) in nsh1.iter_mut().skip(top_len).take(d_usize).enumerate() {
+        *slot = left.get(i).copied().unwrap_or(0) - sh1d;
     }
-    for i in 0..d_usize {
-        nsh2[i] = right
+    for (i, slot) in nsh2.iter_mut().take(d_usize).enumerate() {
+        *slot = right
             .get(rows_usize.saturating_sub(d_usize) + i)
             .copied()
             .unwrap_or(0)
             + sh1d;
     }
-    for i in 0..rows_usize.saturating_sub(d_usize) {
-        nsh2[d_usize + i] = right.get(i).copied().unwrap_or(0) + sh1d - level;
+    for (i, slot) in nsh2.iter_mut().skip(d_usize).take(top_len).enumerate() {
+        *slot = right.get(i).copied().unwrap_or(0) + sh1d - level;
     }
     unsafe { fill_skew_shape(ss, &nsh1, None, Some(&nsh2), 1) }
 }

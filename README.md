@@ -118,6 +118,7 @@ For the public-repository and drop-in release checklist, see
 
 ```bash
 timeout 60s nice -n 10 cargo test
+timeout 60s nice -n 10 cargo clippy --all-targets -- -D warnings
 timeout 60s nice -n 10 cargo build --release
 timeout 60s nice -n 10 scripts/c_abi_smoke.sh
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh

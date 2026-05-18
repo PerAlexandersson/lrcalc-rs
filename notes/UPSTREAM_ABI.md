@@ -51,19 +51,32 @@ important for Python drop-in compatibility:
 
 Implemented in Rust:
 
-1. `ivector` layout plus `iv_new`, `iv_new_zero`, `iv_new_copy`, `iv_free`,
-   `iv_set_zero`, `iv_cmp`, `iv_hash`, and `iv_sum`.
-2. `schur_lrcoef` backed by the native Buch-style coefficient engine.
-3. `lrcalc coef` / `lrcalc lrcoef` CLI output for single coefficients.
+1. `ivector`, `ilist`, `ivlist`, and `ivlincomb` layouts and exported helper
+   functions, with C allocation/free semantics at the ABI boundary.
+2. `schur_lrcoef`, `lrcoef_count`, Schur product/fusion/skew/coproduct
+   functions returning `ivlincomb`, and LR tableau iterator functions.
+3. Partition helpers, quantum printing helpers, permutation/string helpers,
+   Schubert functions, Maple printing helpers, and `optim_*`/`sksh_*` helpers.
+4. Compatibility headers under `include/lrcalc/`, including the public
+   allocator and template headers.  The staged concrete headers expose
+   source-level variadic `*_new_init` constructors with arbitrary arity.
+5. `lrcalc` and `schubmult` CLI commands.  The staged prefix installs both
+   binaries next to the library.
 
-Still missing for Python/Sage drop-in compatibility:
+Verified smoke coverage:
 
-1. `ivlincomb` allocation, insertion, iteration, and `ivlc_free_all`.
-2. Schur expansion functions returning `ivlincomb`: `schur_mult`,
-   `schur_mult_fusion`, `schur_skew`, and `schur_coprod`.
-3. `part_qdegree` and `part_qentry` ABI exports for quantum output.
-4. LR tableau iterator ABI: `lrit_new`, `lrit_good`, `lrit_next`,
-   and `lrit_free`.
-5. Schubert ABI: `trans`, `monk`, `mult_schubert`,
-   and `mult_schubert_str`.
-6. Compatibility headers and C/Python smoke tests.
+1. `scripts/c_abi_smoke.sh` stages headers, shared/static libraries, and CLI
+   binaries, then compiles and runs a C program against the staged prefix.
+2. `scripts/python_bindings_smoke.sh` rebuilds the upstream Python Cython
+   module against the staged Rust prefix.
+3. `scripts/sage_bindings_smoke.sh` validates Sage's wrapper through
+   `LD_PRELOAD`.
+
+Remaining drop-in compatibility work:
+
+1. Full Sage rebuild/install testing rather than `LD_PRELOAD` smoke testing.
+2. A fresh exported-symbol inventory check against a release build.
+3. A final decision on exact CLI output order; current correctness checks
+   compare sorted terms where upstream hash iteration order differs.
+4. Wider C smoke coverage for printing helpers, iterator edge cases, and
+   unusual ownership-transfer calls.

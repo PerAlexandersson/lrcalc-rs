@@ -24,8 +24,10 @@ Run these before opening a substantial pull request:
 
 ```bash
 timeout 60s nice -n 10 cargo fmt --check
+timeout 60s nice -n 10 cargo clippy --all-targets -- -D warnings
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
+timeout 60s nice -n 10 scripts/c_abi_smoke.sh
 ```
 
 If an upstream checkout is available at `/tmp/lrcalc-upstream`, also run:

@@ -2588,8 +2588,8 @@ fn beta_lrcoef_accumulate_content_vec(
 
 fn initial_beta_slack(beta: &[i32], label_count: usize) -> Vec<i32> {
     let mut slack = vec![0; label_count + 2];
-    for label in 2..=label_count {
-        slack[label] = part_entry(beta, label - 2) - part_entry(beta, label - 1);
+    for (label, entry) in slack.iter_mut().enumerate().take(label_count + 1).skip(2) {
+        *entry = part_entry(beta, label - 2) - part_entry(beta, label - 1);
     }
     slack
 }
@@ -2915,14 +2915,14 @@ fn new_content_beta(
 ) -> Result<Vec<LrCoefContent>, LrCoefError> {
     debug_assert!(label_count > 0);
     let mut result = vec![LrCoefContent::default(); label_count + 1];
-    for label in 1..=label_count {
+    for (label, entry) in result.iter_mut().enumerate().take(label_count + 1).skip(1) {
         let beta_value = part_entry(beta, label - 1);
         let content_value = part_entry(content, label - 1);
         if beta_value < 0 || content_value < 0 {
             return Err(LrCoefError::InvalidPartition);
         }
-        result[label].cont = beta_value;
-        result[label].supply = beta_value
+        entry.cont = beta_value;
+        entry.supply = beta_value
             .checked_add(content_value)
             .ok_or(LrCoefError::ArithmeticOverflow)?;
     }

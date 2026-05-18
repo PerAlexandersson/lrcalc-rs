@@ -68,6 +68,9 @@ engines.
 
 `timeout 60s nice -n 10 cargo fmt --check` passed on 2026-05-18.
 
+`timeout 60s nice -n 10 cargo clippy --all-targets -- -D warnings` passed on
+2026-05-18.
+
 `timeout 60s nice -n 10 cargo test -q` passed on 2026-05-18:
 132 library tests, all benchmark-bin test targets, and doc-tests.
 
