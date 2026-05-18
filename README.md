@@ -164,37 +164,23 @@ scripts/skew_kostka_ffi_bench.sh 1000
 scripts/schur_schubert_ffi_bench.sh 500
 ```
 
-Current `lr_hybrid_bench -- 5 3` result: the production tableau full-count
-hybrid was about `401x` faster than raw GT-chain full counts and about `1.10x`
-faster than Buch full counts.  The paired full/interior tableau selector was
-about `152x` faster than raw GT-chain paired counts.
+## Benchmark Snapshot
 
-Current `stretched_dp_bench -- 5 3` result: pure LR GT-chain counts are about
-`911x` slower than packed Kostka counts on the translated suite, while the
-hybrid LR path is about `1.01x` the Kostka time and keeps matching full and
-interior counts.
+The detailed benchmark report is
+[notes/LRCOEF_BENCHMARK_REPORT.md](notes/LRCOEF_BENCHMARK_REPORT.md).  Ratios
+below `1.000x` mean the Rust path was faster than the `lrcalc` baseline in that
+run.
 
-Current `skew_kostka_ffi_bench.sh 1000` result: direct Rust skew Kostka DP was
-about `180x` faster than an upstream-C repeated Schur multiplication baseline.
-
-Current `lrcoef_ffi_bench.sh 5000 mixed` result: the Rust `lrcoef_i64` ABI path
-with native C compactification and counting matches upstream C on 24 mixed LR
-cases and takes `0.95x` upstream C time overall.  Most setup-heavy zero and
-early-exit cases are now faster than upstream, while count-heavy cases are near
-parity.  On `lrcoef_ffi_bench.sh 10000 large-few-parts`, Rust is faster overall
-at `0.96x` upstream C.
-
-Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
-fusion are near upstream C parity.  After the direct `lrit_expand` ABI path,
-raw in-process skew Schur runs are much closer than the old `5.34x` baseline,
-with recent selected runs around `1.3x`--`1.5x` Rust/upstream C.  On the broader
-Schubert diagnostic suite, Rust is faster overall, with the advantage narrowing
-from tiny fixed-overhead cases to the larger S6/S7 examples.
-
-Current Sage wrapper benchmark result: geometric mean `0.965x` Rust/Sage-C
-across 11 cases, with matching correctness signatures.  The skew rows are near
-parity (`1.006x` and `1.067x`), and Schubert multiplication is faster in Rust
-through Sage (`0.445x`).
+| Computation | Rust path | `lrcalc` baseline | Ratio |
+|---|---:|---:|---:|
+| 24 listed LR coefficients, including `c^(7,6,5,4,3,2,1)_(4,4,3,2,1),(5,4,3,2) = 56` | `16.504ms` | `16.673ms` | `0.990x` |
+| `c^(5000,3000)_(3500),(3000,1500) = 1` | `251.416us` | `341.265us` | `0.737x` |
+| `c^(300,200,100)_(200,100),(200,100) = 101` | `501.186ms` | `479.124ms` | `1.046x` |
+| `c^(70,60,50,40,30,20,10)_(40,40,30,20,10),(50,40,30,20) = 247237177` | `84.940ms` h* build plus `2.403ms` for 1000 cached evaluations | `timeout >5s` | n/a |
+| `c^(140,120,100,80,60,40,20)_(80,80,60,40,20),(100,80,60,40) = 140522126162` | `84.940ms` h* build plus `4.016ms` for 1000 cached evaluations | `timeout >5s` | n/a |
+| `K_(7,4,3,1),(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1) = 135135` | `557.181us` direct Kostka DP | `1.400s` LR-translation path | `<0.001x` |
+| 15 stretched Kostka-as-LR full/interior counts listed in the report | `4.075ms` hybrid LR | `3.678s` GT-chain LR | `0.001x` |
+| Sage wrapper, 11 listed operations | geometric mean `0.965x` Rust/Sage-C | Sage's packaged `liblrcalc` | `0.965x` |
 
 Benchmark scripts live under `scripts/`.  CLI-oracle scripts usually take
 `UPSTREAM_BIN`; FFI benchmark scripts usually take `UPSTREAM_LIB` or
