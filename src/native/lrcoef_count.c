@@ -186,7 +186,7 @@ static packed_key mask_bits_u128(uint32_t bits)
 
 static uintptr_t resize_threshold(uintptr_t capacity)
 {
-  uintptr_t threshold = capacity / 2;
+  uintptr_t threshold = capacity - capacity / 4;
   return threshold == 0 ? 1 : threshold;
 }
 
@@ -218,8 +218,8 @@ static uintptr_t packed_initial_capacity(uintptr_t skew_size, uintptr_t label_co
 
   if (cap < 64)
     cap = 64;
-  if (cap > 65536)
-    cap = 65536;
+  if (cap > 32768)
+    cap = 32768;
   return next_power_of_two(cap);
 }
 
