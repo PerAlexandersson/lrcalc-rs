@@ -89,9 +89,8 @@ fi
 
 if [[ -f /.dockerenv && "${ALLOW_DOCKER:-0}" != 1 ]]; then
   cat >&2 <<'EOF'
-This looks like Docker.  The current Docker profile blocks perf sampling unless
-the container is recreated with the profiling capabilities recorded in:
-  /workspace/DOCKER_PROFILING_NEXT_BAKE.md
+This looks like Docker.  Perf sampling usually needs extra container
+capabilities such as SYS_ADMIN, SYS_PTRACE, and a permissive seccomp profile.
 
 Run this from a non-Docker host terminal, or set ALLOW_DOCKER=1 after fixing
 the container capabilities.

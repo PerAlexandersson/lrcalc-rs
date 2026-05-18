@@ -6,7 +6,7 @@ fn main() {
         "kostka_ffi_bench requires cfg upstream_lrcalc_ffi and a link path to upstream liblrcalc"
     );
     eprintln!(
-        "use scripts/kostka_ffi_bench.sh, or set RUSTFLAGS='--cfg upstream_lrcalc_ffi -L native=/workspace/references/lrcalc-upstream/src/.libs'"
+        "use scripts/kostka_ffi_bench.sh, or set RUSTFLAGS='--cfg upstream_lrcalc_ffi -L native=/tmp/lrcalc-upstream/src/.libs'"
     );
     std::process::exit(2);
 }

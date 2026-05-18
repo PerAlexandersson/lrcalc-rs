@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_BIN="${RUST_BIN:-$ROOT_DIR/target/release/lrcalc}"
-UPSTREAM_BIN="${UPSTREAM_BIN:-/workspace/references/lrcalc-upstream/src/lrcalc}"
+UPSTREAM_BIN="${UPSTREAM_BIN:-/tmp/lrcalc-upstream/src/lrcalc}"
 
 if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'

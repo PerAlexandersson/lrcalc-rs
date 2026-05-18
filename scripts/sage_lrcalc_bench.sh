@@ -3,17 +3,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-sage-bench-prefix"}"
-SAGE_PYTHON="${SAGE_PYTHON:-/workspace/.conda-envs/sage/bin/python}"
 OUT="${OUT:-"$ROOT/target/SAGE_LRCALC_BENCHMARK.md"}"
 TMPDIR="${TMPDIR:-/tmp}"
 PRELOAD_LIB="$PREFIX/lib/liblrcalc.so.2"
 
-if [[ ! -x "$SAGE_PYTHON" ]]; then
+if [[ -n "${SAGE_PYTHON:-}" ]]; then
+  if [[ ! -x "$SAGE_PYTHON" ]]; then
+    echo "Sage Python not found or not executable: $SAGE_PYTHON" >&2
+    exit 2
+  fi
+  SAGE_RUNNER=("$SAGE_PYTHON")
+elif command -v sage >/dev/null 2>&1; then
+  SAGE_RUNNER=(sage -python)
+else
   cat >&2 <<EOF
-Sage Python not found:
-  $SAGE_PYTHON
+Sage not found.
 
-Set SAGE_PYTHON to a Sage-enabled Python executable.
+Install Sage with a `sage` command on PATH, or set SAGE_PYTHON to a
+Sage-enabled Python executable.
 EOF
   exit 2
 fi
@@ -26,17 +33,17 @@ trap 'rm -rf "$WORK"' EXIT
 BASELINE_JSON="$WORK/sage-c.json"
 RUST_JSON="$WORK/sage-rust.json"
 
-env -u LD_PRELOAD "$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
+env -u LD_PRELOAD "${SAGE_RUNNER[@]}" "$ROOT/scripts/sage_lrcalc_bench.py" \
   --mode sage-c \
   --json-out "$BASELINE_JSON"
 
 LD_PRELOAD="$PRELOAD_LIB" \
-  "$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
+  "${SAGE_RUNNER[@]}" "$ROOT/scripts/sage_lrcalc_bench.py" \
     --mode sage-rust \
     --json-out "$RUST_JSON"
 
 {
-  "$SAGE_PYTHON" "$ROOT/scripts/sage_lrcalc_bench.py" \
+  "${SAGE_RUNNER[@]}" "$ROOT/scripts/sage_lrcalc_bench.py" \
     --compare \
     --baseline "$BASELINE_JSON" \
     --rust "$RUST_JSON"

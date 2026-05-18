@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_BIN="${RUST_BIN:-$ROOT_DIR/target/release/lrcalc}"
-GT_BIN="${GT_BIN:-/workspace/rust/target/release/kostka}"
-UPSTREAM_BIN="${UPSTREAM_BIN:-/workspace/references/lrcalc-upstream/src/lrcalc}"
+GT_BIN="${GT_BIN:-kostka}"
+UPSTREAM_BIN="${UPSTREAM_BIN:-/tmp/lrcalc-upstream/src/lrcalc}"
 REPEAT="${REPEAT:-120}"
 
 case "${1:-}" in
@@ -12,13 +12,13 @@ case "${1:-}" in
     cat <<'EOF'
 Usage: scripts/kostka_gt_vs_lrcalc_suite.sh [repeat]
 
-Compare the existing GT-DP Kostka implementation in /workspace/rust/kostka
-against upstream C lrcalc, using the Kostka-to-LR translation as the oracle
-bridge. The timed section repeats a mixed fixed suite.
+Compare an external GT-DP Kostka implementation against upstream C lrcalc,
+using the Kostka-to-LR translation as the oracle bridge. The timed section
+repeats a mixed fixed suite.
 
 Environment:
   RUST_BIN       lrcalc-rs binary used only for Kostka-to-LR triples
-  GT_BIN         /workspace/rust/kostka binary to test
+  GT_BIN         GT-DP Kostka binary to test, default `kostka` on PATH
   UPSTREAM_BIN   upstream C lrcalc binary used as oracle
   REPEAT         timed repetitions of the case list, default 120
 EOF
@@ -44,15 +44,12 @@ fi
 echo "building lrcalc-rs release binary..."
 (cd "$ROOT_DIR" && timeout 60s nice -n 10 cargo build --release >/dev/null)
 
-echo "building GT-DP kostka release binary..."
-(cd /workspace/rust && timeout 60s nice -n 10 cargo build --release -p kostka >/dev/null)
-
 if [[ ! -x "$RUST_BIN" ]]; then
   echo "lrcalc-rs binary not found or not executable: $RUST_BIN" >&2
   exit 2
 fi
-if [[ ! -x "$GT_BIN" ]]; then
-  echo "GT-DP kostka binary not found or not executable: $GT_BIN" >&2
+if ! command -v "$GT_BIN" >/dev/null 2>&1 && [[ ! -x "$GT_BIN" ]]; then
+  echo "GT-DP kostka binary not found: $GT_BIN" >&2
   exit 2
 fi
 

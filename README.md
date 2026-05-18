@@ -133,9 +133,8 @@ The Rust library target is named `lrcalc`, so release builds should produce
 `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, `bin/lrcalc`, and
 `bin/schubmult`.
 
-The Sage smoke script expects a Sage-enabled Python at
-`/workspace/.conda-envs/sage/bin/python` by default.  Override with
-`SAGE_PYTHON=/path/to/sage/python` when using another Sage installation.
+The Sage scripts use `sage -python` when `sage` is on `PATH`.  Alternatively,
+set `SAGE_PYTHON=/path/to/sage/python`.
 
 ## Useful Commands
 

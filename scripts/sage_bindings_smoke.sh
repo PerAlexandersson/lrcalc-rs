@@ -3,22 +3,29 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="${PREFIX:-"$ROOT/target/lrcalc-rs-sage-prefix"}"
-SAGE_PYTHON="${SAGE_PYTHON:-/workspace/.conda-envs/sage/bin/python}"
 PRELOAD_LIB="$PREFIX/lib/liblrcalc.so.2"
 
-if [[ ! -x "$SAGE_PYTHON" ]]; then
+if [[ -n "${SAGE_PYTHON:-}" ]]; then
+  if [[ ! -x "$SAGE_PYTHON" ]]; then
+    echo "Sage Python not found or not executable: $SAGE_PYTHON" >&2
+    exit 2
+  fi
+  SAGE_RUNNER=("$SAGE_PYTHON")
+elif command -v sage >/dev/null 2>&1; then
+  SAGE_RUNNER=(sage -python)
+else
   cat >&2 <<EOF
-Sage Python not found:
-  $SAGE_PYTHON
+Sage not found.
 
-Set SAGE_PYTHON to a Sage-enabled Python executable.
+Install Sage with a `sage` command on PATH, or set SAGE_PYTHON to a
+Sage-enabled Python executable.
 EOF
   exit 2
 fi
 
 "$ROOT/scripts/stage_liblrcalc_prefix.sh" "$PREFIX" >/dev/null
 
-LD_PRELOAD="$PRELOAD_LIB${LD_PRELOAD:+:$LD_PRELOAD}" "$SAGE_PYTHON" - <<PY
+LD_PRELOAD="$PRELOAD_LIB${LD_PRELOAD:+:$LD_PRELOAD}" "${SAGE_RUNNER[@]}" - <<PY
 from sage.libs.lrcalc import lrcalc
 
 expected_lib = "$PREFIX/lib/liblrcalc.so.2.0.0"

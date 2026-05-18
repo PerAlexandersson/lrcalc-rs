@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_BIN="${RUST_BIN:-$ROOT_DIR/target/release/lrcalc}"
-UPSTREAM_BIN="${UPSTREAM_BIN:-/workspace/references/lrcalc-upstream/src/lrcalc}"
+UPSTREAM_BIN="${UPSTREAM_BIN:-/tmp/lrcalc-upstream/src/lrcalc}"
 REPEAT="${REPEAT:-250}"
 
 case "${1:-}" in
@@ -39,7 +39,7 @@ upstream binary not found or not executable:
   $UPSTREAM_BIN
 
 Build it first, for example:
-  cd /workspace/references/lrcalc-upstream
+  cd /tmp/lrcalc-upstream
   autoreconf -i
   ./configure --disable-shared --enable-static
   make -j2
