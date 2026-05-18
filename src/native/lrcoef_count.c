@@ -405,6 +405,17 @@ static inline void packed_state_place(packed_content_state *state, uintptr_t lab
   }
 }
 
+static inline void packed_state_place_fit(packed_content_state *state, uintptr_t label)
+{
+  packed_key old = packed_state_get(state, label);
+
+  packed_state_set(state, label, old + 1);
+  if (label > state->len) {
+    state->len = label;
+    packed_state_write_len(state);
+  }
+}
+
 static inline void packed_state_unplace(packed_content_state *state, uintptr_t label)
 {
   packed_key old;
@@ -414,6 +425,18 @@ static inline void packed_state_unplace(packed_content_state *state, uintptr_t l
     return;
   }
   old = packed_state_get(state, label);
+  packed_state_set(state, label, old - 1);
+  if (label == state->len && old == 1) {
+    while (state->len > 0 && packed_state_get(state, state->len) == 0)
+      state->len--;
+    packed_state_write_len(state);
+  }
+}
+
+static inline void packed_state_unplace_fit(packed_content_state *state, uintptr_t label)
+{
+  packed_key old = packed_state_get(state, label);
+
   packed_state_set(state, label, old - 1);
   if (label == state->len && old == 1) {
     while (state->len > 0 && packed_state_get(state, state->len) == 0)
@@ -486,6 +509,7 @@ int32_t lrcalc_native_beta_content_expand_i64(
   int32_t x;
   int32_t above;
   int32_t status;
+  int packed_labels_fit;
 
   terms.keys = NULL;
   terms.values = NULL;
@@ -508,6 +532,7 @@ int32_t lrcalc_native_beta_content_expand_i64(
   status = packed_state_init(&state, skew_size, label_count);
   if (status != 0)
     return status;
+  packed_labels_fit = label_count <= state.max_len;
   if (packed_table_init(&terms, (uintptr_t)skew_size, label_count) != 0)
     return -1;
 
@@ -547,14 +572,20 @@ int32_t lrcalc_native_beta_content_expand_i64(
       x = T[pos].value;
       label = (uintptr_t)x;
       beta_unplace_label(label, label_count, slack);
-      packed_state_unplace(&state, label);
+      if (packed_labels_fit)
+        packed_state_unplace_fit(&state, label);
+      else
+        packed_state_unplace(&state, label);
       x--;
     } else if (pos + 1 < n) {
       uintptr_t label = (uintptr_t)x;
 
       T[pos].value = x;
       beta_place_label(label, label_count, slack);
-      packed_state_place(&state, label);
+      if (packed_labels_fit)
+        packed_state_place_fit(&state, label);
+      else
+        packed_state_place(&state, label);
       pos++;
       x = T[T[pos].east].value;
       above = T[T[pos].north].value;
@@ -563,8 +594,11 @@ int32_t lrcalc_native_beta_content_expand_i64(
 
       T[pos].value = x;
       beta_place_label(label, label_count, slack);
-      packed_state_place(&state, label);
-      if (state.overflow_labels != 0) {
+      if (packed_labels_fit)
+        packed_state_place_fit(&state, label);
+      else
+        packed_state_place(&state, label);
+      if (!packed_labels_fit && state.overflow_labels != 0) {
         status = -2;
         goto cleanup;
       }
@@ -572,7 +606,10 @@ int32_t lrcalc_native_beta_content_expand_i64(
       if (status != 0)
         goto cleanup;
       beta_unplace_label(label, label_count, slack);
-      packed_state_unplace(&state, label);
+      if (packed_labels_fit)
+        packed_state_unplace_fit(&state, label);
+      else
+        packed_state_unplace(&state, label);
       x--;
     }
   }
