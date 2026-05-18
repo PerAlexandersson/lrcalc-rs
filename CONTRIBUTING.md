@@ -54,5 +54,6 @@ The scripts under `scripts/` print the variables they expect.
 
 ## Notes
 
-Historical algorithm and benchmark notes live under `notes/`.  They are
-developer notes, not a stability promise.
+Current public algorithm, ABI, and benchmark notes live under `notes/`.
+One-off profiling logs and local benchmark output should stay outside the
+tracked tree, usually under `target/`.
