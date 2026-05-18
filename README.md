@@ -43,6 +43,11 @@ For background on the main objects computed by this project, see SymCat:
 - [Kostka coefficients and Kostka--Foulkes polynomials](https://www.symmetricfunctions.com/kostkaFoulkes.htm)
 - [Schubert polynomials](https://www.symmetricfunctions.com/schubert.htm)
 
+## Support
+
+To support SymCat and related symmetric-functions resources, see
+[Ko-fi: symmetricfunctions](https://ko-fi.com/symmetricfunctions).
+
 ## Implemented
 
 - `liblrcalc` library target configured as `cdylib`, `staticlib`, and `rlib`.
