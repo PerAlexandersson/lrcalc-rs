@@ -14,6 +14,10 @@
 *.swo
 .DS_Store
 
+# Python local output.
+__pycache__/
+*.py[cod]
+
 # Local environment files.
 .env
 .env.*
