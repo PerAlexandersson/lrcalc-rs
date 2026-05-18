@@ -15,6 +15,13 @@ typedef struct {
 } lrcoef_box;
 
 typedef struct {
+  int32_t value;
+  int32_t max;
+  int32_t north;
+  int32_t east;
+} lrcontent_box;
+
+typedef struct {
   int32_t cont;
   int32_t supply;
 } lrcoef_content;
@@ -125,6 +132,68 @@ static lrcoef_box *new_skewtab(
   array[n].value = 0;
   array[n + 1].value = max_value;
   array[n + 1].se_supply = 0;
+
+  return array;
+}
+
+static lrcontent_box *new_content_skewtab(
+    const int32_t *outer,
+    uintptr_t outer_len,
+    const int32_t *inner,
+    uintptr_t inner_len,
+    int32_t max_value,
+    int32_t skew_size)
+{
+  lrcontent_box *array;
+  uintptr_t n;
+  int32_t pos, rr;
+
+  if (skew_size < 0 || outer_len > (uintptr_t)INT32_MAX)
+    return NULL;
+  n = (uintptr_t)skew_size;
+  if (n > (UINTPTR_MAX / sizeof(lrcontent_box)) - 2)
+    return NULL;
+
+  array = (lrcontent_box *)malloc((n + 2) * sizeof(lrcontent_box));
+  if (array == NULL)
+    return NULL;
+
+  pos = skew_size;
+  for (rr = (int32_t)outer_len; rr-- > 0;) {
+    int32_t nu_0 = (rr == 0) ? outer[0] : outer[rr - 1];
+    int32_t la_0 = (rr == 0) ? outer[0] : part_entry(inner, inner_len, rr - 1);
+    int32_t nu_r = outer[rr];
+    int32_t la_r = part_entry(inner, inner_len, rr);
+    int32_t nu_1 = part_entry(outer, outer_len, rr + 1);
+    int32_t c;
+
+    for (c = la_r; c < nu_r; c++) {
+      lrcontent_box *box;
+
+      if (pos == 0) {
+        free(array);
+        return NULL;
+      }
+      pos--;
+      box = array + pos;
+      box->north = (la_0 <= c && c < nu_0) ? pos - nu_r + la_0 : skew_size;
+      box->east = (c + 1 < nu_r) ? pos - 1 : skew_size + 1;
+      if (c >= nu_1) {
+        box->max = max_value;
+      } else {
+        int32_t below = pos + nu_1 - la_r;
+        box->max = array[below].max - 1;
+      }
+      box->value = 0;
+    }
+  }
+
+  if (pos != 0) {
+    free(array);
+    return NULL;
+  }
+  array[n].value = 0;
+  array[n + 1].value = max_value;
 
   return array;
 }
@@ -475,7 +544,7 @@ int32_t lrcalc_native_beta_content_expand_i64(
     lrcalc_content_emit_fn emit,
     void *ctx)
 {
-  lrcoef_box *T = NULL;
+  lrcontent_box *T = NULL;
   int32_t *slack = NULL;
   int32_t *content = NULL;
   packed_content_table terms;
@@ -519,7 +588,7 @@ int32_t lrcalc_native_beta_content_expand_i64(
   for (i = 2; i <= label_count; i++)
     slack[i] = part_entry(beta, beta_len, i - 2) - part_entry(beta, beta_len, i - 1);
 
-  T = new_skewtab(outer, outer_len, inner, inner_len, (int32_t)label_count, skew_size);
+  T = new_content_skewtab(outer, outer_len, inner, inner_len, (int32_t)label_count, skew_size);
   if (T == NULL) {
     free(slack);
     packed_table_dealloc(&terms);
