@@ -2846,11 +2846,59 @@ pub unsafe extern "C" fn lrit_next(lrit: *mut LrTabIter) {
     }
 }
 
-/// # Safety
-///
-/// `lrit` must point to a valid LR tableau iterator.
-#[no_mangle]
-pub unsafe extern "C" fn lrit_count(lrit: *mut LrTabIter) -> *mut IvLinComb {
+unsafe fn lrit_next_fast(lrit: *mut LrTabIter) -> bool {
+    let size = unsafe { (*lrit).size as usize };
+    let array = unsafe { ptr::addr_of_mut!((*lrit).array).cast::<LritBox>() };
+    let cont = unsafe { (*lrit).cont };
+    if cont.is_null() {
+        unsafe { (*lrit).size = -1 };
+        return false;
+    }
+    let cont_values = unsafe { ivector_data_mut(cont) };
+
+    for index in 0..size {
+        let box_ptr = unsafe { array.add(index) };
+        let right = unsafe { (*box_ptr).right as usize };
+        let mut max = unsafe { (*array.add(right)).value };
+        if max > unsafe { (*box_ptr).max } {
+            max = unsafe { (*box_ptr).max };
+        }
+
+        let mut x = unsafe { (*box_ptr).value };
+        unsafe { *cont_values.add(x as usize) -= 1 };
+        x += 1;
+        while x <= max
+            && unsafe { *cont_values.add(x as usize) == *cont_values.add(x as usize - 1) }
+        {
+            x += 1;
+        }
+        if x > max {
+            continue;
+        }
+
+        unsafe {
+            (*box_ptr).value = x;
+            *cont_values.add(x as usize) += 1;
+        }
+        let mut fill = index;
+        while fill != 0 {
+            fill -= 1;
+            let fill_ptr = unsafe { array.add(fill) };
+            let above = unsafe { (*fill_ptr).above as usize };
+            let value = unsafe { (*array.add(above)).value + 1 };
+            unsafe {
+                (*fill_ptr).value = value;
+                *cont_values.add(value as usize) += 1;
+            }
+        }
+        return true;
+    }
+
+    unsafe { (*lrit).size = -1 };
+    false
+}
+
+unsafe fn lrit_count_fast(lrit: *mut LrTabIter) -> *mut IvLinComb {
     if lrit.is_null() {
         return ptr::null_mut();
     }
@@ -2858,7 +2906,7 @@ pub unsafe extern "C" fn lrit_count(lrit: *mut LrTabIter) -> *mut IvLinComb {
     if lc.is_null() {
         return ptr::null_mut();
     }
-    while unsafe { lrit_good(lrit) } != 0 {
+    while unsafe { (*lrit).size >= 0 } {
         let cont = unsafe { (*lrit).cont };
         if cont.is_null()
             || unsafe { ivlc_add_element(lc, 1, cont, iv_hash(cont) as u32, LC_COPY_KEY) } != 0
@@ -2866,9 +2914,19 @@ pub unsafe extern "C" fn lrit_count(lrit: *mut LrTabIter) -> *mut IvLinComb {
             unsafe { ivlc_free_all(lc) };
             return ptr::null_mut();
         }
-        unsafe { lrit_next(lrit) };
+        if !unsafe { lrit_next_fast(lrit) } {
+            break;
+        }
     }
     lc
+}
+
+/// # Safety
+///
+/// `lrit` must point to a valid LR tableau iterator.
+#[no_mangle]
+pub unsafe extern "C" fn lrit_count(lrit: *mut LrTabIter) -> *mut IvLinComb {
+    unsafe { lrit_count_fast(lrit) }
 }
 
 /// # Safety
