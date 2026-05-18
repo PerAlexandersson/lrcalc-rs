@@ -1301,10 +1301,12 @@ fn prepare_beta_expansion_shape(
         return Ok(None);
     }
 
-    let inferred_labels = part_length(&beta)
-        .checked_add(usize::try_from(skew_size).map_err(|_| LrCoefError::ArithmeticOverflow)?)
+    let max_possible_labels = part_length(&beta)
+        .checked_add(nonempty_skew_rows(&outer, &inner))
         .ok_or(LrCoefError::ArithmeticOverflow)?;
-    let label_count = max_labels.unwrap_or(inferred_labels);
+    let label_count = max_labels
+        .map(|labels| labels.min(max_possible_labels))
+        .unwrap_or(max_possible_labels);
     if label_count == 0 {
         return Ok(None);
     }
@@ -1346,6 +1348,14 @@ fn prepare_beta_shape_from_optimized(
             }))
         }
     }
+}
+
+fn nonempty_skew_rows(outer: &[i32], inner: &[i32]) -> usize {
+    outer
+        .iter()
+        .enumerate()
+        .filter(|&(row, &outer_part)| outer_part > part_entry(inner, row))
+        .count()
 }
 
 fn compact_skew_shape(mut outer: Vec<i32>, mut inner: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
