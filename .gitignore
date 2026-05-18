@@ -21,3 +21,6 @@ __pycache__/
 # Local environment files.
 .env
 .env.*
+
+# Local agent handoff/state notes.
+/HANDOFF.md
