@@ -19,6 +19,13 @@ typedef struct {
   int32_t supply;
 } lrcoef_content;
 
+typedef int32_t (*lrcalc_content_begin_fn)(void *ctx, uintptr_t term_count);
+typedef int32_t (*lrcalc_content_emit_fn)(
+    void *ctx,
+    const int32_t *content,
+    uintptr_t content_len,
+    int64_t coefficient);
+
 static inline int32_t part_entry(const int32_t *part, uintptr_t len, uintptr_t index)
 {
   return (index < len) ? part[index] : 0;
@@ -120,6 +127,487 @@ static lrcoef_box *new_skewtab(
   array[n + 1].se_supply = 0;
 
   return array;
+}
+
+typedef __uint128_t packed_key;
+
+typedef struct {
+  packed_key *keys;
+  uint64_t *values;
+  uintptr_t capacity;
+  uintptr_t len;
+  uintptr_t resize_at;
+} packed_content_table;
+
+typedef struct {
+  uint32_t bits;
+  uint32_t len_bits;
+  packed_key len_mask;
+  packed_key value_mask;
+  uintptr_t max_len;
+  uintptr_t len;
+  uintptr_t overflow_labels;
+  packed_key key;
+} packed_content_state;
+
+static inline uint64_t mix_u64(uint64_t value)
+{
+  value ^= value >> 33;
+  value *= UINT64_C(0xff51afd7ed558ccd);
+  value ^= value >> 33;
+  value *= UINT64_C(0xc4ceb9fe1a85ec53);
+  return value ^ (value >> 33);
+}
+
+static inline uint64_t mix_key(packed_key value)
+{
+  uint64_t low = (uint64_t)value;
+  uint64_t high = (uint64_t)(value >> 64);
+  return mix_u64(low ^ ((high << 32) | (high >> 32)));
+}
+
+static uint32_t bits_needed_u64(uint64_t value)
+{
+  uint32_t bits = 0;
+
+  do {
+    bits++;
+    value >>= 1;
+  } while (value != 0);
+  return bits;
+}
+
+static packed_key mask_bits_u128(uint32_t bits)
+{
+  if (bits >= 128)
+    return ~(packed_key)0;
+  return (((packed_key)1) << bits) - 1;
+}
+
+static uintptr_t resize_threshold(uintptr_t capacity)
+{
+  uintptr_t threshold = capacity / 2;
+  return threshold == 0 ? 1 : threshold;
+}
+
+static uintptr_t next_power_of_two(uintptr_t value)
+{
+  uintptr_t power = 2;
+
+  while (power < value) {
+    if (power > UINTPTR_MAX / 2)
+      return 0;
+    power *= 2;
+  }
+  return power;
+}
+
+static uintptr_t packed_initial_capacity(uintptr_t skew_size, uintptr_t label_count)
+{
+  uintptr_t cap;
+
+  if (skew_size != 0 && label_count > UINTPTR_MAX / skew_size)
+    cap = 65536;
+  else {
+    cap = skew_size * label_count;
+    if (cap > UINTPTR_MAX / 8)
+      cap = 65536;
+    else
+      cap *= 8;
+  }
+
+  if (cap < 64)
+    cap = 64;
+  if (cap > 65536)
+    cap = 65536;
+  return next_power_of_two(cap);
+}
+
+static int packed_table_init(
+    packed_content_table *table,
+    uintptr_t skew_size,
+    uintptr_t label_count)
+{
+  uintptr_t capacity = packed_initial_capacity(skew_size, label_count);
+
+  if (capacity == 0)
+    return -1;
+  table->keys = (packed_key *)calloc(capacity, sizeof(packed_key));
+  table->values = (uint64_t *)calloc(capacity, sizeof(uint64_t));
+  if (table->keys == NULL || table->values == NULL) {
+    free(table->keys);
+    free(table->values);
+    table->keys = NULL;
+    table->values = NULL;
+    return -1;
+  }
+  table->capacity = capacity;
+  table->len = 0;
+  table->resize_at = resize_threshold(capacity);
+  return 0;
+}
+
+static void packed_table_dealloc(packed_content_table *table)
+{
+  free(table->keys);
+  free(table->values);
+  table->keys = NULL;
+  table->values = NULL;
+  table->capacity = 0;
+  table->len = 0;
+  table->resize_at = 0;
+}
+
+static void packed_table_insert_existing(
+    packed_content_table *table,
+    packed_key key,
+    uint64_t value)
+{
+  uintptr_t mask = table->capacity - 1;
+  uintptr_t index = (uintptr_t)mix_key(key) & mask;
+
+  while (table->values[index] != 0)
+    index = (index + 1) & mask;
+
+  table->keys[index] = key;
+  table->values[index] = value;
+  table->len++;
+}
+
+static int packed_table_grow(packed_content_table *table)
+{
+  packed_key *old_keys = table->keys;
+  uint64_t *old_values = table->values;
+  uintptr_t old_capacity = table->capacity;
+  uintptr_t new_capacity;
+  uintptr_t i;
+
+  if (old_capacity > UINTPTR_MAX / 2)
+    return -1;
+  new_capacity = old_capacity * 2;
+  table->keys = (packed_key *)calloc(new_capacity, sizeof(packed_key));
+  table->values = (uint64_t *)calloc(new_capacity, sizeof(uint64_t));
+  if (table->keys == NULL || table->values == NULL) {
+    free(table->keys);
+    free(table->values);
+    table->keys = old_keys;
+    table->values = old_values;
+    return -1;
+  }
+
+  table->capacity = new_capacity;
+  table->len = 0;
+  table->resize_at = resize_threshold(new_capacity);
+  for (i = 0; i < old_capacity; i++) {
+    if (old_values[i] != 0)
+      packed_table_insert_existing(table, old_keys[i], old_values[i]);
+  }
+
+  free(old_keys);
+  free(old_values);
+  return 0;
+}
+
+static int packed_table_add(packed_content_table *table, packed_key key)
+{
+  while (1) {
+    uintptr_t mask = table->capacity - 1;
+    uintptr_t index = (uintptr_t)mix_key(key) & mask;
+
+    while (1) {
+      uint64_t value = table->values[index];
+      if (value == 0) {
+        if (table->len >= table->resize_at) {
+          if (packed_table_grow(table) != 0)
+            return -1;
+          break;
+        }
+        table->keys[index] = key;
+        table->values[index] = 1;
+        table->len++;
+        return 0;
+      }
+      if (table->keys[index] == key) {
+        if (value == (uint64_t)INT64_MAX)
+          return -2;
+        table->values[index] = value + 1;
+        return 0;
+      }
+      index = (index + 1) & mask;
+    }
+  }
+}
+
+static int packed_state_init(
+    packed_content_state *state,
+    int32_t skew_size,
+    uintptr_t label_count)
+{
+  uint32_t bits;
+  uint32_t len_bits;
+  uintptr_t max_len;
+
+  if (skew_size < 0)
+    return -1;
+  bits = bits_needed_u64((uint64_t)skew_size);
+  len_bits = bits_needed_u64((uint64_t)label_count);
+  if (len_bits >= 128)
+    return -2;
+  max_len = (uintptr_t)((128 - len_bits) / bits);
+  if (max_len == 0)
+    return -2;
+
+  state->bits = bits;
+  state->len_bits = len_bits;
+  state->len_mask = mask_bits_u128(len_bits);
+  state->value_mask = mask_bits_u128(bits);
+  state->max_len = max_len;
+  state->len = 0;
+  state->overflow_labels = 0;
+  state->key = 0;
+  return 0;
+}
+
+static inline packed_key packed_state_get(const packed_content_state *state, uintptr_t label)
+{
+  uint32_t shift = state->len_bits + state->bits * (uint32_t)(label - 1);
+  return (state->key >> shift) & state->value_mask;
+}
+
+static inline void packed_state_set(
+    packed_content_state *state,
+    uintptr_t label,
+    packed_key value)
+{
+  uint32_t shift = state->len_bits + state->bits * (uint32_t)(label - 1);
+  packed_key mask = state->value_mask << shift;
+  state->key = (state->key & ~mask) | (value << shift);
+}
+
+static inline void packed_state_write_len(packed_content_state *state)
+{
+  state->key = (state->key & ~state->len_mask) | (packed_key)state->len;
+}
+
+static inline void packed_state_place(packed_content_state *state, uintptr_t label)
+{
+  packed_key old;
+
+  if (label > state->max_len) {
+    state->overflow_labels++;
+    return;
+  }
+  old = packed_state_get(state, label);
+  packed_state_set(state, label, old + 1);
+  if (label > state->len) {
+    state->len = label;
+    packed_state_write_len(state);
+  }
+}
+
+static inline void packed_state_unplace(packed_content_state *state, uintptr_t label)
+{
+  packed_key old;
+
+  if (label > state->max_len) {
+    state->overflow_labels--;
+    return;
+  }
+  old = packed_state_get(state, label);
+  packed_state_set(state, label, old - 1);
+  if (label == state->len && old == 1) {
+    while (state->len > 0 && packed_state_get(state, state->len) == 0)
+      state->len--;
+    packed_state_write_len(state);
+  }
+}
+
+static int unpack_packed_key(
+    packed_key key,
+    const packed_content_state *state,
+    int32_t *content,
+    uintptr_t *content_len)
+{
+  uintptr_t len = (uintptr_t)(key & state->len_mask);
+  uintptr_t i;
+
+  if (len > state->max_len)
+    return -1;
+  for (i = 0; i < len; i++) {
+    uint32_t shift = state->len_bits + state->bits * (uint32_t)i;
+    content[i] = (int32_t)((key >> shift) & state->value_mask);
+  }
+  *content_len = len;
+  return 0;
+}
+
+static inline int beta_label_allowed(uintptr_t label, const int32_t *slack)
+{
+  return label == 1 || slack[label] > 0;
+}
+
+static inline void beta_place_label(uintptr_t label, uintptr_t label_count, int32_t *slack)
+{
+  if (label > 1)
+    slack[label]--;
+  if (label < label_count)
+    slack[label + 1]++;
+}
+
+static inline void beta_unplace_label(uintptr_t label, uintptr_t label_count, int32_t *slack)
+{
+  if (label > 1)
+    slack[label]++;
+  if (label < label_count)
+    slack[label + 1]--;
+}
+
+int32_t lrcalc_native_beta_content_expand_i64(
+    const int32_t *outer,
+    uintptr_t outer_len,
+    const int32_t *inner,
+    uintptr_t inner_len,
+    const int32_t *beta,
+    uintptr_t beta_len,
+    uintptr_t label_count,
+    int32_t skew_size,
+    lrcalc_content_begin_fn begin,
+    lrcalc_content_emit_fn emit,
+    void *ctx)
+{
+  lrcoef_box *T = NULL;
+  int32_t *slack = NULL;
+  int32_t *content = NULL;
+  packed_content_table terms;
+  packed_content_state state;
+  uintptr_t i;
+  uintptr_t n;
+  uintptr_t pos;
+  int32_t x;
+  int32_t above;
+  int32_t status;
+
+  terms.keys = NULL;
+  terms.values = NULL;
+  terms.capacity = 0;
+  terms.len = 0;
+  terms.resize_at = 0;
+
+  if (outer == NULL || begin == NULL || emit == NULL)
+    return -1;
+  if (skew_size < 0 || label_count > (uintptr_t)INT32_MAX)
+    return -2;
+  if (skew_size == 0) {
+    if (begin(ctx, 1) != 0)
+      return -1;
+    return emit(ctx, NULL, 0, 1);
+  }
+  if (outer_len == 0 || label_count == 0)
+    return -1;
+
+  status = packed_state_init(&state, skew_size, label_count);
+  if (status != 0)
+    return status;
+  if (packed_table_init(&terms, (uintptr_t)skew_size, label_count) != 0)
+    return -1;
+
+  slack = (int32_t *)calloc(label_count + 2, sizeof(int32_t));
+  if (slack == NULL) {
+    packed_table_dealloc(&terms);
+    return -1;
+  }
+  for (i = 2; i <= label_count; i++)
+    slack[i] = part_entry(beta, beta_len, i - 2) - part_entry(beta, beta_len, i - 1);
+
+  T = new_skewtab(outer, outer_len, inner, inner_len, (int32_t)label_count, skew_size);
+  if (T == NULL) {
+    free(slack);
+    packed_table_dealloc(&terms);
+    return -1;
+  }
+
+  n = (uintptr_t)skew_size;
+  pos = 0;
+  above = T[T[pos].north].value;
+  x = (int32_t)label_count;
+
+  while (1) {
+    while (x > T[pos].max)
+      x--;
+    while (x > 0 && x > above && !beta_label_allowed((uintptr_t)x, slack))
+      x--;
+
+    if (x <= above) {
+      uintptr_t label;
+
+      if (pos == 0)
+        break;
+      pos--;
+      above = T[T[pos].north].value;
+      x = T[pos].value;
+      label = (uintptr_t)x;
+      beta_unplace_label(label, label_count, slack);
+      packed_state_unplace(&state, label);
+      x--;
+    } else if (pos + 1 < n) {
+      uintptr_t label = (uintptr_t)x;
+
+      T[pos].value = x;
+      beta_place_label(label, label_count, slack);
+      packed_state_place(&state, label);
+      pos++;
+      x = T[T[pos].east].value;
+      above = T[T[pos].north].value;
+    } else {
+      uintptr_t label = (uintptr_t)x;
+
+      T[pos].value = x;
+      beta_place_label(label, label_count, slack);
+      packed_state_place(&state, label);
+      if (state.overflow_labels != 0) {
+        status = -2;
+        goto cleanup;
+      }
+      status = packed_table_add(&terms, state.key);
+      if (status != 0)
+        goto cleanup;
+      beta_unplace_label(label, label_count, slack);
+      packed_state_unplace(&state, label);
+      x--;
+    }
+  }
+
+  content = (int32_t *)malloc(state.max_len * sizeof(int32_t));
+  if (content == NULL && state.max_len != 0) {
+    status = -1;
+    goto cleanup;
+  }
+  if (begin(ctx, terms.len) != 0) {
+    status = -1;
+    goto cleanup;
+  }
+  for (i = 0; i < terms.capacity; i++) {
+    uintptr_t content_len;
+
+    if (terms.values[i] == 0)
+      continue;
+    if (unpack_packed_key(terms.keys[i], &state, content, &content_len) != 0) {
+      status = -1;
+      goto cleanup;
+    }
+    if (emit(ctx, content, content_len, (int64_t)terms.values[i]) != 0) {
+      status = -1;
+      goto cleanup;
+    }
+  }
+  status = 0;
+
+cleanup:
+  free(content);
+  free(T);
+  free(slack);
+  packed_table_dealloc(&terms);
+  return status;
 }
 
 typedef struct {

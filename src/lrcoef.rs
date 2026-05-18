@@ -5,9 +5,14 @@
 //! tableaux with the branch-pruned search from `lrcoef_count`.
 
 use std::collections::HashMap;
+use std::ffi::{c_int, c_void};
+use std::slice;
 
 use num_rational::BigRational;
 use num_traits::Zero;
+
+type NativeContentBegin = unsafe extern "C" fn(*mut c_void, usize) -> c_int;
+type NativeContentEmit = unsafe extern "C" fn(*mut c_void, *const i32, usize, i64) -> c_int;
 
 unsafe extern "C" {
     fn lrcalc_native_lrcoef_i64(
@@ -28,6 +33,20 @@ unsafe extern "C" {
         content_len: usize,
         content_sum: i32,
     ) -> i64;
+
+    fn lrcalc_native_beta_content_expand_i64(
+        outer: *const i32,
+        outer_len: usize,
+        inner: *const i32,
+        inner_len: usize,
+        beta: *const i32,
+        beta_len: usize,
+        label_count: usize,
+        skew_size: i32,
+        begin: NativeContentBegin,
+        emit: NativeContentEmit,
+        ctx: *mut c_void,
+    ) -> c_int;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -301,10 +320,107 @@ where
         return Ok(());
     }
 
+    let mut begin = Some(begin);
+    if try_visit_native_beta_lr_content_expansion(&shape, &mut begin, &mut visit)? {
+        return Ok(());
+    }
+
     let terms = beta_lrcoef_content_accumulator(&shape)?;
+    let begin = begin.take().ok_or(LrCoefError::ArithmeticOverflow)?;
     begin(terms.len());
     terms.visit_terms(visit);
     Ok(())
+}
+
+struct NativeContentVisitContext<'a, B, F> {
+    begin: &'a mut Option<B>,
+    visit: &'a mut F,
+    failed: bool,
+}
+
+fn try_visit_native_beta_lr_content_expansion<B, F>(
+    shape: &BetaSkewShape,
+    begin: &mut Option<B>,
+    visit: &mut F,
+) -> Result<bool, LrCoefError>
+where
+    B: FnOnce(usize),
+    F: FnMut(&[i32], u128),
+{
+    let mut context = NativeContentVisitContext {
+        begin,
+        visit,
+        failed: false,
+    };
+    let status = unsafe {
+        lrcalc_native_beta_content_expand_i64(
+            shape.outer.as_ptr(),
+            shape.outer.len(),
+            shape.inner.as_ptr(),
+            shape.inner.len(),
+            shape.beta.as_ptr(),
+            shape.beta.len(),
+            shape.label_count,
+            shape.skew_size,
+            native_content_begin_trampoline::<B, F>,
+            native_content_emit_trampoline::<B, F>,
+            (&mut context as *mut NativeContentVisitContext<'_, B, F>).cast::<c_void>(),
+        )
+    };
+
+    if status == 0 && !context.failed {
+        return Ok(true);
+    }
+    if context.begin.is_some() {
+        return Ok(false);
+    }
+    Err(LrCoefError::ArithmeticOverflow)
+}
+
+unsafe extern "C" fn native_content_begin_trampoline<B, F>(
+    ctx: *mut c_void,
+    term_count: usize,
+) -> c_int
+where
+    B: FnOnce(usize),
+    F: FnMut(&[i32], u128),
+{
+    if ctx.is_null() {
+        return -1;
+    }
+    let context = unsafe { &mut *ctx.cast::<NativeContentVisitContext<'_, B, F>>() };
+    let Some(begin) = context.begin.take() else {
+        context.failed = true;
+        return -1;
+    };
+    begin(term_count);
+    0
+}
+
+unsafe extern "C" fn native_content_emit_trampoline<B, F>(
+    ctx: *mut c_void,
+    content: *const i32,
+    content_len: usize,
+    coefficient: i64,
+) -> c_int
+where
+    B: FnOnce(usize),
+    F: FnMut(&[i32], u128),
+{
+    if ctx.is_null() || coefficient < 0 {
+        return -1;
+    }
+    let context = unsafe { &mut *ctx.cast::<NativeContentVisitContext<'_, B, F>>() };
+    let content = if content_len == 0 {
+        &[]
+    } else if content.is_null() {
+        context.failed = true;
+        return -1;
+    } else {
+        unsafe { slice::from_raw_parts(content, content_len) }
+    };
+    (context.visit)(content, coefficient as u128);
+    0
 }
 
 enum ContentAccumulator {
@@ -2328,7 +2444,7 @@ fn beta_lrcoef_accumulate_content_packed(
         shape.label_count,
         shape.skew_size,
     )?;
-    let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
+    let mut yamanouchi_slack = initial_beta_slack(&shape.beta, shape.label_count);
     let mut content_counts = vec![0i32; shape.label_count + 1];
     let mut packed_state = PackedContentState::new(&packed);
     let mut packed_terms = packed;
@@ -2344,7 +2460,7 @@ fn beta_lrcoef_accumulate_content_packed(
         while x > boxes[pos].max {
             x -= 1;
         }
-        while x > 0 && x > above && !beta_content_label_allowed(x as usize, &total_counts) {
+        while x > 0 && x > above && !beta_slack_label_allowed(x as usize, &yamanouchi_slack) {
             x -= 1;
         }
 
@@ -2356,13 +2472,13 @@ fn beta_lrcoef_accumulate_content_packed(
             above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             let label = x as usize;
-            unplace_content_label(label, &mut total_counts, &mut content_counts);
+            unplace_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             packed_state.unplace(label);
             x -= 1;
         } else if pos + 1 < real_boxes {
             boxes[pos].value = x;
             let label = x as usize;
-            place_content_label_fast(label, &mut total_counts, &mut content_counts);
+            place_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             packed_state.place(label);
             pos += 1;
             x = boxes[boxes[pos].east as usize].value;
@@ -2370,7 +2486,7 @@ fn beta_lrcoef_accumulate_content_packed(
         } else {
             boxes[pos].value = x;
             let label = x as usize;
-            place_content_label_fast(label, &mut total_counts, &mut content_counts);
+            place_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             packed_state.place(label);
             if let Some(key) = packed_state.packed_key() {
                 packed_terms.add_key(key)?;
@@ -2379,7 +2495,7 @@ fn beta_lrcoef_accumulate_content_packed(
                 let terms = vec_terms.get_or_insert_with(HashMap::new);
                 add_vec_content(terms, content)?;
             }
-            unplace_content_label(label, &mut total_counts, &mut content_counts);
+            unplace_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             packed_state.unplace(label);
             x -= 1;
         }
@@ -2412,7 +2528,7 @@ fn beta_lrcoef_accumulate_content_vec(
         shape.label_count,
         shape.skew_size,
     )?;
-    let mut total_counts = initial_beta_counts(&shape.beta, shape.label_count);
+    let mut yamanouchi_slack = initial_beta_slack(&shape.beta, shape.label_count);
     let mut content_counts = vec![0i32; shape.label_count + 1];
 
     let n = shape.skew_size;
@@ -2425,7 +2541,7 @@ fn beta_lrcoef_accumulate_content_vec(
         while x > boxes[pos].max {
             x -= 1;
         }
-        while x > 0 && x > above && !beta_content_label_allowed(x as usize, &total_counts) {
+        while x > 0 && x > above && !beta_slack_label_allowed(x as usize, &yamanouchi_slack) {
             x -= 1;
         }
 
@@ -2437,22 +2553,22 @@ fn beta_lrcoef_accumulate_content_vec(
             above = boxes[boxes[pos].north as usize].value;
             x = boxes[pos].value;
             let label = x as usize;
-            unplace_content_label(label, &mut total_counts, &mut content_counts);
+            unplace_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             x -= 1;
         } else if pos + 1 < real_boxes {
             boxes[pos].value = x;
             let label = x as usize;
-            place_content_label(label, &mut total_counts, &mut content_counts)?;
+            place_content_label_checked(label, &mut yamanouchi_slack, &mut content_counts)?;
             pos += 1;
             x = boxes[boxes[pos].east as usize].value;
             above = boxes[boxes[pos].north as usize].value;
         } else {
             boxes[pos].value = x;
             let label = x as usize;
-            place_content_label(label, &mut total_counts, &mut content_counts)?;
+            place_content_label_checked(label, &mut yamanouchi_slack, &mut content_counts)?;
             let content = trimmed_content_slice(&content_counts[1..]);
             add_vec_content(terms, content)?;
-            unplace_content_label(label, &mut total_counts, &mut content_counts);
+            unplace_content_label_slack(label, &mut yamanouchi_slack, &mut content_counts);
             x -= 1;
         }
     }
@@ -2460,39 +2576,56 @@ fn beta_lrcoef_accumulate_content_vec(
     Ok(())
 }
 
-fn initial_beta_counts(beta: &[i32], label_count: usize) -> Vec<i32> {
-    let mut counts = vec![0; label_count + 1];
-    for label in 1..=label_count {
-        counts[label] = part_entry(beta, label - 1);
+fn initial_beta_slack(beta: &[i32], label_count: usize) -> Vec<i32> {
+    let mut slack = vec![0; label_count + 2];
+    for label in 2..=label_count {
+        slack[label] = part_entry(beta, label - 2) - part_entry(beta, label - 1);
     }
-    counts
+    slack
 }
 
-fn beta_content_label_allowed(label: usize, total_counts: &[i32]) -> bool {
-    label == 1 || total_counts[label] < total_counts[label - 1]
+fn beta_slack_label_allowed(label: usize, slack: &[i32]) -> bool {
+    label == 1 || slack[label] > 0
 }
 
-fn place_content_label(
+fn place_content_label_checked(
     label: usize,
-    total_counts: &mut [i32],
+    slack: &mut [i32],
     content_counts: &mut [i32],
 ) -> Result<(), LrCoefError> {
-    total_counts[label] = total_counts[label]
-        .checked_add(1)
-        .ok_or(LrCoefError::ArithmeticOverflow)?;
+    if label > 1 {
+        slack[label] = slack[label]
+            .checked_sub(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+    }
+    if label + 1 < slack.len() {
+        slack[label + 1] = slack[label + 1]
+            .checked_add(1)
+            .ok_or(LrCoefError::ArithmeticOverflow)?;
+    }
     content_counts[label] = content_counts[label]
         .checked_add(1)
         .ok_or(LrCoefError::ArithmeticOverflow)?;
     Ok(())
 }
 
-fn place_content_label_fast(label: usize, total_counts: &mut [i32], content_counts: &mut [i32]) {
-    total_counts[label] += 1;
+fn place_content_label_slack(label: usize, slack: &mut [i32], content_counts: &mut [i32]) {
+    if label > 1 {
+        slack[label] -= 1;
+    }
+    if label + 1 < slack.len() {
+        slack[label + 1] += 1;
+    }
     content_counts[label] += 1;
 }
 
-fn unplace_content_label(label: usize, total_counts: &mut [i32], content_counts: &mut [i32]) {
-    total_counts[label] -= 1;
+fn unplace_content_label_slack(label: usize, slack: &mut [i32], content_counts: &mut [i32]) {
+    if label > 1 {
+        slack[label] += 1;
+    }
+    if label + 1 < slack.len() {
+        slack[label + 1] -= 1;
+    }
     content_counts[label] -= 1;
 }
 
