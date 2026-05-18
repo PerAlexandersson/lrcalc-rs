@@ -34,6 +34,10 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                parts.extend(args[index + 1..].iter().cloned());
+                break;
+            }
             "-m" => {
                 maple = true;
                 index += 1;
@@ -207,5 +211,9 @@ mod tests {
 
         let parsed = parse_args(&args(&["-r4", "2", "1", "-", "2", "1"])).unwrap();
         assert_eq!(parsed.rank, 4);
+
+        let parsed = parse_args(&args(&["--", "1", "2", "-", "1", "2"])).unwrap();
+        assert_eq!(parsed.left, vec![1, 2]);
+        assert_eq!(parsed.right, vec![1, 2]);
     }
 }

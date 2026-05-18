@@ -691,34 +691,12 @@ pub extern "C" fn iv_new_init(
     }
     unsafe {
         let data = ivector_data_mut(v);
-        if length > 0 {
-            *data.add(0) = x0;
+        let values = [x0, x1, x2, x3, x4, x5, x6, x7];
+        for (index, value) in values.iter().copied().enumerate().take(length as usize) {
+            *data.add(index) = value;
         }
-        if length > 1 {
-            *data.add(1) = x1;
-        }
-        if length > 2 {
-            *data.add(2) = x2;
-        }
-        if length > 3 {
-            *data.add(3) = x3;
-        }
-        if length > 4 {
-            *data.add(4) = x4;
-        }
-        if length > 5 {
-            *data.add(5) = x5;
-        }
-        if length > 6 {
-            *data.add(6) = x6;
-        }
-        if length > 7 {
-            *data.add(7) = x7;
-        }
-        if length > 8 {
-            for index in 8..length as usize {
-                *data.add(index) = 0;
-            }
+        for index in values.len()..length as usize {
+            *data.add(index) = 0;
         }
     }
     v
@@ -1288,17 +1266,12 @@ pub unsafe extern "C" fn il_new_init(
     if list.is_null() {
         return ptr::null_mut();
     }
-    if count > 0 && unsafe { il_append(list, x0) } != 0
-        || count > 1 && unsafe { il_append(list, x1) } != 0
-        || count > 2 && unsafe { il_append(list, x2) } != 0
-        || count > 3 && unsafe { il_append(list, x3) } != 0
-        || count > 4 && unsafe { il_append(list, x4) } != 0
-        || count > 5 && unsafe { il_append(list, x5) } != 0
-        || count > 6 && unsafe { il_append(list, x6) } != 0
-        || count > 7 && unsafe { il_append(list, x7) } != 0
-    {
-        unsafe { il_free(list) };
-        return ptr::null_mut();
+    let values = [x0, x1, x2, x3, x4, x5, x6, x7];
+    for value in values.iter().copied().take(count) {
+        if unsafe { il_append(list, value) } != 0 {
+            unsafe { il_free(list) };
+            return ptr::null_mut();
+        }
     }
     list
 }
@@ -1550,17 +1523,12 @@ pub unsafe extern "C" fn ivl_new_init(
     if list.is_null() {
         return ptr::null_mut();
     }
-    if count > 0 && unsafe { ivl_append(list, x0) } != 0
-        || count > 1 && unsafe { ivl_append(list, x1) } != 0
-        || count > 2 && unsafe { ivl_append(list, x2) } != 0
-        || count > 3 && unsafe { ivl_append(list, x3) } != 0
-        || count > 4 && unsafe { ivl_append(list, x4) } != 0
-        || count > 5 && unsafe { ivl_append(list, x5) } != 0
-        || count > 6 && unsafe { ivl_append(list, x6) } != 0
-        || count > 7 && unsafe { ivl_append(list, x7) } != 0
-    {
-        unsafe { ivl_free(list) };
-        return ptr::null_mut();
+    let values = [x0, x1, x2, x3, x4, x5, x6, x7];
+    for value in values.iter().copied().take(count) {
+        if unsafe { ivl_append(list, value) } != 0 {
+            unsafe { ivl_free(list) };
+            return ptr::null_mut();
+        }
     }
     list
 }

@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 pub type LinearCombination = BTreeMap<Vec<i32>, i32>;
+const MAX_STRING_CLASSES: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchubertError {
@@ -386,7 +387,7 @@ fn string_dimension_vector(string: &[i32]) -> Option<Vec<i32>> {
     let mut classes = 0usize;
     for &value in string {
         let value = usize::try_from(value).ok()?;
-        if value > string.len() {
+        if value >= MAX_STRING_CLASSES {
             return None;
         }
         let next = value.checked_add(1)?;
@@ -551,6 +552,7 @@ mod tests {
         assert!(string_dimension_vector(&[-1]).is_none());
         assert!(string_dimension_vector(&[i32::MAX]).is_none());
         assert_eq!(string_dimension_vector(&[0, 2]), Some(vec![1, 1, 2]));
+        assert_eq!(string_dimension_vector(&[3]), Some(vec![0, 0, 0, 1]));
         assert!(permutation_to_string(&[i32::MIN], &[1]).is_none());
         assert!(!twice_sum_exceeds_rank(i32::MAX, i32::MAX, i32::MAX));
         let _ = twice_sum_exceeds_rank(i32::MAX, i32::MAX, i32::MIN);
@@ -561,6 +563,10 @@ mod tests {
         assert_eq!(
             terms(multiply_schubert_strings(&[0, 1], &[1, 0]).unwrap()),
             vec![(vec![1, 0], 1)]
+        );
+        assert_eq!(
+            terms(multiply_schubert_strings(&[3], &[3]).unwrap()),
+            vec![(vec![3], 1)]
         );
         let mixed = multiply_schubert_strings(&[0, 2, 1, 0, 2, 1], &[1, 0, 2, 1, 0, 2]).unwrap();
         assert_eq!(mixed.len(), 5);

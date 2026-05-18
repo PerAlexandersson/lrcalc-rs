@@ -1,6 +1,7 @@
 #ifndef LRCALC_IVECTOR_H
 #define LRCALC_IVECTOR_H
 
+#include <stdarg.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -18,8 +19,22 @@ typedef struct ivector {
 ivector *iv_new(uint32_t length);
 ivector *iv_new_zero(uint32_t length);
 ivector *iv_new_copy(ivector *v);
-ivector *iv_new_init(uint32_t length, ...);
 void iv_free(ivector *v);
+
+static inline ivector *iv_new_init(uint32_t length, ...)
+{
+  ivector *v = iv_new(length);
+  if (v == 0)
+    return 0;
+
+  va_list ap;
+  va_start(ap, length);
+  for (uint32_t i = 0; i < length; i++)
+    v->array[i] = va_arg(ap, int);
+  va_end(ap);
+
+  return v;
+}
 
 void iv_set_zero(ivector *v);
 int iv_cmp(ivector *v1, ivector *v2);

@@ -14,8 +14,8 @@ engines.
 - Compatibility headers for the upstream Python/Sage Cython surface and common
   public C headers live under `include/lrcalc/`.
   `scripts/stage_liblrcalc_prefix.sh` stages those headers plus
-  `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, and `liblrcalc.a`
-  under `target/lrcalc-rs-prefix`.
+  `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, `liblrcalc.a`,
+  `bin/lrcalc`, and `bin/schubmult` under `target/lrcalc-rs-prefix`.
 - `src/abi.rs` exports the upstream C ABI symbol surface: `ivector`,
   `ivlincomb`, `ilist`, `ivlist`, partition iterators, partition helpers,
   permutation/string helpers, LR-tableau iterators, Schur/fusion functions,
@@ -74,9 +74,10 @@ engines.
 `timeout 60s nice -n 10 scripts/c_abi_smoke.sh` passed on 2026-05-18.  It
 stages the Rust install prefix, compiles `tests/c_abi_smoke.c` against the
 installed headers with `-Werror`, checks `ivlc_iter` layout against `size_t`
-fields, links to `liblrcalc`, and exercises low-level containers, Schur
-helpers, LR-tableau iteration, Schubert multiplication, `optim_skew`, and
-`lrcoef_count`.
+fields, links both shared and static `liblrcalc`, and exercises arbitrary-arity
+source-level initializer calls, low-level containers, Schur helpers,
+LR-tableau iteration, Schubert multiplication, `optim_skew`, `lrcoef_count`,
+and the staged `lrcalc`/`schubmult` binaries.
 
 `timeout 120s nice -n 10 scripts/python_bindings_smoke.sh` passed on
 2026-05-18.  It builds the upstream `python/lrcalc.pyx` Cython module against
@@ -191,12 +192,17 @@ The remaining upstream-exported ABI helpers were added on 2026-05-17:
 10 cargo build --release` pass.  A release `nm -D` comparison against upstream
 shows no missing exported symbols and only the intentional extra
 `lrcalc_new_abi_version`.
-Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic;
-stable Rust cannot define true variadic exports, so the current symbols are
-fixed-argument compatibility shims covering the first eight initializer values.
-The staged headers declare the upstream variadic form, and the smoke test covers
-small initializer calls, but arbitrary initializer arity remains a release
-compatibility caveat.
+Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic.
+Stable Rust cannot define true variadic exports, so the exported dynamic
+symbols remain fixed-argument compatibility shims covering the first eight
+initializer values.  The staged C headers now provide source-level static
+inline variadic constructors, and the C smoke test covers calls with more than
+eight initializer values.
+
+`ivlc_add_multiple(..., LC_FREE_KEY)` deliberately clears the source table when
+moving owned keys into a distinct destination.  This avoids the upstream
+dangling-key/double-free hazard, but differs if downstream code observes
+`ivlc_card(src)` after a transfer.
 
 `scripts/schur_schubert_ffi_bench.sh 500` was added and passed on 2026-05-17
 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  It verifies and times
@@ -234,9 +240,10 @@ the public Rust path keeps a Rust fallback for errors and overflow.
   constant factors and Rust ABI table overhead.
 - Optimize fusion products by using the newly exposed `optim_fusion` path in
   `schur_mult_fusion` rather than reducing a full row-bounded product.
-- Broaden C smoke tests for the ABI surface, including more ownership-transfer,
-  iterator, printing, and `schubmult` cases.
-- Audit staged headers against the complete upstream installed-header surface.
+- Broaden C smoke tests for the ABI surface, including more iterator and
+  printing cases.
+- Audit staged headers against the complete upstream installed-header surface,
+  especially allocator/template-header expectations.
 - Expand Sage tests beyond the current `LD_PRELOAD` smoke test, or rebuild
   Sage's lrcalc package against the Rust install prefix.
 - Decide whether native Rust skew expansion should keep the beta enumerator as

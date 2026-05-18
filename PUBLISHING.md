@@ -29,8 +29,8 @@ timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 
 - Broaden the C smoke tests against the full upstream header inventory and more
   ownership/layout edge cases.
-- Audit staged headers against the upstream installed headers, including the
-  current arbitrary-arity variadic initializer shim caveat.
+- Audit staged headers against the upstream installed headers and decide which
+  allocator/template headers are part of the supported source surface.
 - Add full Sage rebuild tests or a documented manual recipe; the current
   smoke script validates Sage's wrapper via `LD_PRELOAD`.
 - Re-run the upstream exported-symbol inventory against a release build.

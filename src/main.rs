@@ -866,12 +866,17 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
     let args = expand_short_options(args, &['r', 'c', 'f', 'q']);
     let mut rows = -1;
     let mut cols = -1;
-    let mut mode = None;
+    let mut fusion = false;
+    let mut quantum = false;
     let mut maple = false;
     let mut parts = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                parts.extend(args[index + 1..].iter().cloned());
+                break;
+            }
             "-m" => {
                 maple = true;
                 index += 1;
@@ -898,10 +903,9 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
                 if fusion_rows < 0 || level < 0 {
                     return Err("fusion rows and level must be nonnegative".to_string());
                 }
-                mode = Some(MultMode::Fusion {
-                    rows: fusion_rows,
-                    level,
-                });
+                fusion = true;
+                rows = fusion_rows;
+                cols = level;
                 index += 2;
             }
             "-q" => {
@@ -912,10 +916,9 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
                 if quantum_rows < 0 || level < 0 {
                     return Err("quantum rows and level must be nonnegative".to_string());
                 }
-                mode = Some(MultMode::Quantum {
-                    rows: quantum_rows,
-                    level,
-                });
+                quantum = true;
+                rows = quantum_rows;
+                cols = level;
                 index += 2;
             }
             token => {
@@ -929,10 +932,23 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
         "-",
         "usage: mult [-m] [-r rows] [-c cols] [-q rows,level] [-f rows,level] PART1 - PART2",
     )?;
+    let mode = if quantum {
+        if rows < 0 || cols < 0 {
+            return Err("quantum rows and level must be nonnegative".to_string());
+        }
+        MultMode::Quantum { rows, level: cols }
+    } else if fusion {
+        if rows < 0 || cols < 0 {
+            return Err("fusion rows and level must be nonnegative".to_string());
+        }
+        MultMode::Fusion { rows, level: cols }
+    } else {
+        MultMode::Ordinary { rows, cols }
+    };
     Ok(MultArgs {
         left,
         right,
-        mode: mode.unwrap_or(MultMode::Ordinary { rows, cols }),
+        mode,
         maple,
     })
 }
@@ -945,6 +961,10 @@ fn parse_skew_args(args: &[String]) -> Result<SkewArgs, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                parts.extend(args[index + 1..].iter().cloned());
+                break;
+            }
             "-m" => {
                 maple = true;
                 index += 1;
@@ -982,6 +1002,10 @@ fn parse_coprod_args(args: &[String]) -> Result<CoprodArgs, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                parts.extend(args[index + 1..].iter().cloned());
+                break;
+            }
             "-a" => {
                 all = true;
                 index += 1;
@@ -1011,6 +1035,10 @@ fn parse_tab_args(args: &[String]) -> Result<TabArgs, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                parts.extend(args[index + 1..].iter().cloned());
+                break;
+            }
             "-r" => {
                 let value = args
                     .get(index + 1)
@@ -1429,6 +1457,30 @@ mod tests {
             }
             _ => panic!("expected quantum mode"),
         }
+
+        let parsed = parse_mult_args(&args(&["-q3,2", "-r2", "2", "1", "-", "2", "1"])).unwrap();
+        match parsed.mode {
+            MultMode::Quantum { rows, level } => {
+                assert_eq!(rows, 2);
+                assert_eq!(level, 2);
+            }
+            _ => panic!("expected quantum mode"),
+        }
+
+        let parsed =
+            parse_mult_args(&args(&["-m", "-q3,2", "-f3,2", "2", "1", "-", "2", "1"])).unwrap();
+        assert!(parsed.maple);
+        match parsed.mode {
+            MultMode::Quantum { rows, level } => {
+                assert_eq!(rows, 3);
+                assert_eq!(level, 2);
+            }
+            _ => panic!("expected quantum mode"),
+        }
+
+        let parsed = parse_mult_args(&args(&["--", "1", "-", "1"])).unwrap();
+        assert_eq!(parsed.left, vec![1]);
+        assert_eq!(parsed.right, vec![1]);
     }
 
     #[test]

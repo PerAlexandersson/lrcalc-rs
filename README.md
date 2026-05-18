@@ -54,9 +54,9 @@ To support SymCat and related symmetric-functions resources, see
 - Linux release builds use upstream-compatible SONAME `liblrcalc.so.2`.
 - Compatibility headers for the upstream Python/Sage Cython surface under
   `include/lrcalc/`.
-- Initial C ABI smoke coverage for staged headers, `ivlc_iter` layout,
-  low-level containers, Schur/LR-tableau helpers, Schubert helpers, and the
-  native LR coefficient kernel.
+- Initial C ABI smoke coverage for staged headers, shared and static library
+  links, `ivlc_iter` layout, low-level containers, Schur/LR-tableau helpers,
+  Schubert helpers, staged CLI binaries, and the native LR coefficient kernel.
 - C-facing `ivector`, `ivlincomb`, `ilist`, `ivlist`, partition iterator,
   partition, permutation/string, LR-tableau iterator, Schur, fusion, and
   Schubert ABI surfaces.  A release `nm` check currently has no missing
@@ -96,8 +96,7 @@ To support SymCat and related symmetric-functions resources, see
 - Broader C layout/link smoke tests against the full upstream header inventory.
 - Sage rebuild tests against the Rust library; the current Sage check is an
   `LD_PRELOAD` wrapper smoke test.
-- Complete installed-header audit beyond the currently staged public headers,
-  including arbitrary-arity C variadic initializer calls.
+- Complete installed-header audit against the full upstream header inventory.
 
 ## License
 
@@ -130,7 +129,8 @@ The Rust library target is named `lrcalc`, so release builds should produce
 `liblrcalc.so` and `liblrcalc.a` on Linux.  The staging helper
 `scripts/stage_liblrcalc_prefix.sh` creates a local prefix under
 `target/lrcalc-rs-prefix` with `include/lrcalc/`, `liblrcalc.a`,
-`liblrcalc.so`, `liblrcalc.so.2`, and `liblrcalc.so.2.0.0`.
+`liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, `bin/lrcalc`, and
+`bin/schubmult`.
 
 The Sage smoke script expects a Sage-enabled Python at
 `/workspace/.conda-envs/sage/bin/python` by default.  Override with

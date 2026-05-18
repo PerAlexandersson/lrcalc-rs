@@ -202,6 +202,12 @@ pub fn schur_product_fusion_expansion(
         return Err(SchurExpansionError::InvalidPartition);
     }
     if rows == 0 {
+        if trim_trailing_zeroes(sh1).is_empty() && trim_trailing_zeroes(sh2).is_empty() {
+            return Ok(vec![SignedSchurTerm {
+                partition: Vec::new(),
+                coefficient: 1,
+            }]);
+        }
         return Ok(Vec::new());
     }
     let rows = usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
@@ -1109,6 +1115,13 @@ mod tests {
         assert_eq!(
             schur_product_fusion_expansion(&[1], &[1], 0, 1),
             Ok(Vec::new())
+        );
+        assert_eq!(
+            schur_product_fusion_expansion(&[0], &[0], 0, 1),
+            Ok(vec![SignedSchurTerm {
+                partition: Vec::new(),
+                coefficient: 1,
+            }])
         );
         assert_eq!(
             schur_product_fusion_expansion(&[1], &[1], 2, -1),

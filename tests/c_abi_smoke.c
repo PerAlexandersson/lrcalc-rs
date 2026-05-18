@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "lrcalc/alloc.h"
 #include "lrcalc/ilist.h"
 #include "lrcalc/ivector.h"
 #include "lrcalc/ivlincomb.h"
@@ -32,13 +33,18 @@ int main(void)
   ivector *three_two_one = iv_new_init(3, 3, 2, 1);
   ivector *inner = iv_new_init(1, 1);
   ivector *perm = iv_new_init(3, 2, 1, 3);
+  ivector *long_init = iv_new_init(10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
   assert(one != 0 && two_one != 0 && three_two_one != 0 && inner != 0);
+  assert(long_init != 0 && long_init->array[0] == 1 && long_init->array[9] == 10);
   assert(part_valid(two_one) == 1);
   assert(perm != 0 && perm_valid(perm) == 1);
 
   ilist *left_list = il_new_init(1, 1, 7);
   ilist *right_list = il_new_init(1, 2, 11, 13);
+  ilist *long_ilist = il_new_init(1, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9);
   assert(left_list != 0 && right_list != 0);
+  assert(long_ilist != 0 && long_ilist->length == 9 && long_ilist->array[8] == 9);
+  il_free(long_ilist);
   assert(il_extend(left_list, right_list) == 0);
   assert(left_list->length == 3);
   assert(left_list->array[0] == 7 && left_list->array[1] == 11 && left_list->array[2] == 13);
@@ -47,7 +53,15 @@ int main(void)
 
   ivlist *vl1 = ivl_new_init(1, 1, iv_new_init(1, 3));
   ivlist *vl2 = ivl_new_init(1, 1, iv_new_init(1, 4));
+  ivlist *long_ivlist = ivl_new_init(
+      1, 9,
+      iv_new_init(1, 1), iv_new_init(1, 2), iv_new_init(1, 3),
+      iv_new_init(1, 4), iv_new_init(1, 5), iv_new_init(1, 6),
+      iv_new_init(1, 7), iv_new_init(1, 8), iv_new_init(1, 9));
   assert(vl1 != 0 && vl2 != 0);
+  assert(long_ivlist != 0 && long_ivlist->length == 9);
+  assert(long_ivlist->array[8]->array[0] == 9);
+  ivl_free_all(long_ivlist);
   assert(ivl_extend(vl1, vl2) == 0);
   assert(vl1->length == 2);
   ivl_free(vl2);
@@ -90,6 +104,7 @@ int main(void)
 
   assert(lrcoef_count(three_two_one, inner, one) >= 0);
 
+  iv_free(long_init);
   iv_free(inner);
   iv_free(perm);
   iv_free(three_two_one);
