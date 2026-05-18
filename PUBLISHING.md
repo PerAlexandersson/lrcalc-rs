@@ -20,20 +20,23 @@ compatibility release still needs a few packaging checks.
 timeout 60s nice -n 10 cargo fmt --check
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
+timeout 60s nice -n 10 scripts/c_abi_smoke.sh
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
 timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 ```
 
 ## Drop-in Compatibility Release Blockers
 
-- Add C smoke tests that link against the built `liblrcalc`.
-- Audit and complete installed headers beyond the Python/Sage Cython surface,
-  including the current non-variadic initializer shim caveat.
+- Broaden the C smoke tests against the full upstream header inventory and more
+  ownership/layout edge cases.
+- Audit staged headers against the upstream installed headers, including the
+  current arbitrary-arity variadic initializer shim caveat.
 - Add full Sage rebuild tests or a documented manual recipe; the current
   smoke script validates Sage's wrapper via `LD_PRELOAD`.
 - Re-run the upstream exported-symbol inventory against a release build.
 - Re-run the benchmark report against a fresh upstream C checkout.
-- Decide whether output order must exactly match upstream for each CLI command.
+- Decide whether output order must exactly match upstream for each CLI command;
+  current compatibility checks compare sorted terms where order differs.
 
 ## Suggested First GitHub Settings
 
@@ -41,4 +44,5 @@ timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 - Protect the default branch after the initial CI run passes.
 - Add topics such as `lrcalc`, `littlewood-richardson`, `schur-functions`,
   `kostka`, `schubert-polynomials`, and `rust`.
-- Add an initial release only after the C headers and smoke tests exist.
+- Add an initial release only after the staged-header audit and compatibility
+  smoke tests are broad enough for downstream rebuilds.

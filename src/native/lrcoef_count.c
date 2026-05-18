@@ -1,7 +1,13 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Native LR coefficient kernels, kept C-shaped to match Buch's hot paths.
+ * The compactification/count-only path mirrors ABI behavior and algorithms
+ * from Anders S. Buch's GPL-3.0-or-later lrcalc sources, especially the
+ * coefficient optimization path.
+ */
+
 #include <stdint.h>
 #include <stdlib.h>
-
-/* Native LR coefficient kernels, kept C-shaped to match Buch's hot paths. */
 
 typedef struct {
   int32_t value;

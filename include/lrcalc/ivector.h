@@ -18,6 +18,7 @@ typedef struct ivector {
 ivector *iv_new(uint32_t length);
 ivector *iv_new_zero(uint32_t length);
 ivector *iv_new_copy(ivector *v);
+ivector *iv_new_init(uint32_t length, ...);
 void iv_free(ivector *v);
 
 void iv_set_zero(ivector *v);

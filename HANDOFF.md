@@ -11,10 +11,11 @@ engines.
 - Rust crate builds as `liblrcalc` (`cdylib`, `staticlib`, `rlib`) plus a
   `lrcalc` binary and a `schubmult` binary.  Linux release builds now carry
   upstream-compatible SONAME `liblrcalc.so.2`.
-- Compatibility headers for the upstream Python/Sage Cython surface live under
-  `include/lrcalc/`.  `scripts/stage_liblrcalc_prefix.sh` stages those headers
-  plus `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, and
-  `liblrcalc.a` under `target/lrcalc-rs-prefix`.
+- Compatibility headers for the upstream Python/Sage Cython surface and common
+  public C headers live under `include/lrcalc/`.
+  `scripts/stage_liblrcalc_prefix.sh` stages those headers plus
+  `liblrcalc.so`, `liblrcalc.so.2`, `liblrcalc.so.2.0.0`, and `liblrcalc.a`
+  under `target/lrcalc-rs-prefix`.
 - `src/abi.rs` exports the upstream C ABI symbol surface: `ivector`,
   `ivlincomb`, `ilist`, `ivlist`, partition iterators, partition helpers,
   permutation/string helpers, LR-tableau iterators, Schur/fusion functions,
@@ -65,8 +66,17 @@ engines.
 
 ## Verified
 
-`timeout 60s nice -n 10 cargo test` passed on 2026-05-18:
-130 library tests, all benchmark-bin test targets, and doc-tests.
+`timeout 60s nice -n 10 cargo fmt --check` passed on 2026-05-18.
+
+`timeout 60s nice -n 10 cargo test -q` passed on 2026-05-18:
+132 library tests, all benchmark-bin test targets, and doc-tests.
+
+`timeout 60s nice -n 10 scripts/c_abi_smoke.sh` passed on 2026-05-18.  It
+stages the Rust install prefix, compiles `tests/c_abi_smoke.c` against the
+installed headers with `-Werror`, checks `ivlc_iter` layout against `size_t`
+fields, links to `liblrcalc`, and exercises low-level containers, Schur
+helpers, LR-tableau iteration, Schubert multiplication, `optim_skew`, and
+`lrcoef_count`.
 
 `timeout 120s nice -n 10 scripts/python_bindings_smoke.sh` passed on
 2026-05-18.  It builds the upstream `python/lrcalc.pyx` Cython module against
@@ -184,6 +194,9 @@ shows no missing exported symbols and only the intentional extra
 Upstream's `iv_new_init`, `il_new_init`, and `ivl_new_init` are C-variadic;
 stable Rust cannot define true variadic exports, so the current symbols are
 fixed-argument compatibility shims covering the first eight initializer values.
+The staged headers declare the upstream variadic form, and the smoke test covers
+small initializer calls, but arbitrary initializer arity remains a release
+compatibility caveat.
 
 `scripts/schur_schubert_ffi_bench.sh 500` was added and passed on 2026-05-17
 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  It verifies and times
@@ -221,9 +234,9 @@ the public Rust path keeps a Rust fallback for errors and overflow.
   constant factors and Rust ABI table overhead.
 - Optimize fusion products by using the newly exposed `optim_fusion` path in
   `schur_mult_fusion` rather than reducing a full row-bounded product.
-- Add C smoke tests for the ABI surface, including struct layout, Schubert, and
-  `schubmult`.
-- Audit and complete installed headers beyond the Python/Sage Cython surface.
+- Broaden C smoke tests for the ABI surface, including more ownership-transfer,
+  iterator, printing, and `schubmult` cases.
+- Audit staged headers against the complete upstream installed-header surface.
 - Expand Sage tests beyond the current `LD_PRELOAD` smoke test, or rebuild
   Sage's lrcalc package against the Rust install prefix.
 - Decide whether native Rust skew expansion should keep the beta enumerator as
@@ -231,8 +244,8 @@ the public Rust path keeps a Rust fallback for errors and overflow.
 
 ## Next Useful Work
 
-- Add C/Python smoke tests for `ivlincomb`, `schur_mult`, `schur_skew`,
-  `schur_coprod`, Schubert products, and the low-level helper APIs.
+- Broaden C/Python smoke tests for `ivlincomb`, Schur products, Schubert
+  products, printing helpers, and low-level ownership-transfer APIs.
 - Add an output-order decision for the CLI: either document unordered output or
   mimic upstream hash iteration more closely.
 - Add an `nm`-based exported-symbol check to CI so full ABI coverage stays

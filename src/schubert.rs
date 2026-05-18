@@ -129,7 +129,10 @@ pub fn valid_permutation(w: &[i32]) -> bool {
     let n = w.len();
     let mut seen = vec![false; n];
     for &value in w {
-        let Ok(index) = usize::try_from(value - 1) else {
+        let Some(value) = value.checked_sub(1) else {
+            return false;
+        };
+        let Ok(index) = usize::try_from(value) else {
             return false;
         };
         if index >= n || seen[index] {
@@ -373,17 +376,20 @@ fn bruhat_zero(w1: &[i32], w2: &[i32], rank: i32) -> bool {
 }
 
 fn twice_sum_exceeds_rank(left_len: i32, right_len: i32, rank: i32) -> bool {
-    let lhs = i64::from(left_len + right_len) * 2;
-    let rhs = i64::from(rank) * i64::from(rank - 1);
+    let lhs = (i64::from(left_len) + i64::from(right_len)) * 2;
+    let rank = i64::from(rank);
+    let rhs = rank * (rank - 1);
     lhs > rhs
 }
 
 fn string_dimension_vector(string: &[i32]) -> Option<Vec<i32>> {
     let mut classes = 0usize;
     for &value in string {
-        let Ok(next) = usize::try_from(value + 1) else {
+        let value = usize::try_from(value).ok()?;
+        if value > string.len() {
             return None;
-        };
+        }
+        let next = value.checked_add(1)?;
         classes = classes.max(next);
     }
     let mut out = vec![0; classes];
@@ -421,7 +427,7 @@ fn permutation_to_string(perm: &[i32], dimvec: &[i32]) -> Option<Vec<i32>> {
             } else {
                 i32::try_from(j + 1).ok()?
             };
-            let target = usize::try_from(wj - 1).ok()?;
+            let target = usize::try_from(wj.checked_sub(1)?).ok()?;
             if target >= out.len() {
                 return None;
             }
@@ -536,6 +542,18 @@ mod tests {
     #[test]
     fn rank_bound_can_zero_schubert_product() {
         assert!(multiply_schubert(&[2, 1], &[2, 1], 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_extreme_invalid_inputs_without_overflow() {
+        assert!(!valid_permutation(&[i32::MIN]));
+        assert!(!valid_permutation(&[i32::MAX]));
+        assert!(string_dimension_vector(&[-1]).is_none());
+        assert!(string_dimension_vector(&[i32::MAX]).is_none());
+        assert_eq!(string_dimension_vector(&[0, 2]), Some(vec![1, 1, 2]));
+        assert!(permutation_to_string(&[i32::MIN], &[1]).is_none());
+        assert!(!twice_sum_exceeds_rank(i32::MAX, i32::MAX, i32::MAX));
+        let _ = twice_sum_exceeds_rank(i32::MAX, i32::MAX, i32::MIN);
     }
 
     #[test]

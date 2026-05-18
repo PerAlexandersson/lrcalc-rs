@@ -115,6 +115,7 @@ where
     } else {
         None
     };
+    let mut overflowed = false;
     visit_beta_lr_content_expansion_with_len(
         &optimized.outer,
         &optimized.inner,
@@ -122,10 +123,19 @@ where
         max_labels,
         begin,
         |content, coefficient| {
-            let partition = add_content_vectors(&optimized.fixed_content, content);
+            if overflowed {
+                return;
+            }
+            let Some(partition) = add_content_vectors(&optimized.fixed_content, content) else {
+                overflowed = true;
+                return;
+            };
             visit(partition, coefficient);
         },
     )?;
+    if overflowed {
+        return Err(SchurExpansionError::ArithmeticOverflow);
+    }
     Ok(())
 }
 
@@ -188,8 +198,11 @@ pub fn schur_product_fusion_expansion(
 ) -> Result<Vec<SignedSchurTerm>, SchurExpansionError> {
     validate_partition(sh1)?;
     validate_partition(sh2)?;
-    if rows <= 0 || level < 0 {
+    if rows < 0 || level < 0 {
         return Err(SchurExpansionError::InvalidPartition);
+    }
+    if rows == 0 {
+        return Ok(Vec::new());
     }
     let rows = usize::try_from(rows).map_err(|_| SchurExpansionError::ArithmeticOverflow)?;
     if has_nonzero_entry_at_or_after(sh1, rows) || has_nonzero_entry_at_or_after(sh2, rows) {
@@ -479,7 +492,7 @@ pub(crate) fn optimize_skew_shape(
     let mut inn = vec![0; slen];
     let mut content = vec![0; row_span.max(max_rows).max(1)];
     let mut content_len = 0usize;
-    let mut content_size = 0i32;
+    let mut content_size = 0i64;
     let mut full_cols = 0i32;
 
     let mut c2 = outer[row_first];
@@ -526,14 +539,16 @@ pub(crate) fn optimize_skew_shape(
         }
 
         if c1 == c2 - 1 && r1_height == max_rows {
-            full_cols += 1;
+            full_cols = full_cols
+                .checked_add(1)
+                .ok_or(SchurExpansionError::ArithmeticOverflow)?;
             c2 = c1;
             r2_top = r0_top;
             r2_bot = r0_bot;
             continue;
         }
 
-        let mut component_size = 0i32;
+        let mut component_size = 0i64;
         for row in r2_top..r1_bot {
             let mut left = part_entry_i32(inner, row);
             if left < c1 {
@@ -543,7 +558,9 @@ pub(crate) fn optimize_skew_shape(
             if right > c2 {
                 right = c2;
             }
-            component_size += right - left;
+            component_size = component_size
+                .checked_add(i64::from(right) - i64::from(left))
+                .ok_or(SchurExpansionError::ArithmeticOverflow)?;
         }
 
         if (r1_top == r2_top || r1_bot == r2_bot)
@@ -567,7 +584,7 @@ pub(crate) fn optimize_skew_shape(
                     r1_top: 0,
                     r1_bot: equal_rows,
                 },
-            );
+            )?;
         }
 
         if r1_top == r2_top && component_size > content_size {
@@ -603,7 +620,7 @@ pub(crate) fn optimize_skew_shape(
                     r1_top: r2_top,
                     r1_bot: r2_bot,
                 },
-            );
+            )?;
         }
 
         c2 = c1;
@@ -614,7 +631,9 @@ pub(crate) fn optimize_skew_shape(
     if full_cols > 0 {
         ensure_len(&mut content, max_rows);
         for value in content.iter_mut().take(content_len) {
-            *value += full_cols;
+            *value = value
+                .checked_add(full_cols)
+                .ok_or(SchurExpansionError::ArithmeticOverflow)?;
         }
         for value in content.iter_mut().take(max_rows).skip(content_len) {
             *value = full_cols;
@@ -629,10 +648,14 @@ pub(crate) fn optimize_skew_shape(
     out.truncate(bot);
     inn.truncate(bot);
     for value in &mut out {
-        *value -= col_shift;
+        *value = value
+            .checked_sub(col_shift)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     }
     for value in &mut inn {
-        *value -= col_shift;
+        *value = value
+            .checked_sub(col_shift)
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     }
     out = trim_trailing_zeroes(&out);
     inn = trim_trailing_zeroes(&inn);
@@ -671,13 +694,24 @@ fn add_component(
     out0: &[i32],
     inn0: Option<&[i32]>,
     window: ComponentWindow,
-) {
-    let mut x = partial.top + partial.rows + window.r1_top - window.r1_bot;
+) -> Result<(), SchurExpansionError> {
+    let mut x = partial
+        .top
+        .checked_add(partial.rows)
+        .and_then(|value| value.checked_add(window.r1_top))
+        .and_then(|value| value.checked_sub(window.r1_bot))
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     if x > partial.bot {
         x = partial.bot;
     }
-    let y1 = x + window.r1_bot - window.r1_top;
-    let z = y1 + window.r0_bot - window.r1_bot;
+    let y1 = x
+        .checked_add(window.r1_bot)
+        .and_then(|value| value.checked_sub(window.r1_top))
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    let z = y1
+        .checked_add(window.r0_bot)
+        .and_then(|value| value.checked_sub(window.r1_bot))
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
 
     for row in partial.bot..y1 {
         partial.out[row] = partial.col;
@@ -685,22 +719,42 @@ fn add_component(
     for row in y1..z {
         let source_row = row - x + window.r1_top;
         let c = part_entry_i32(out0, source_row);
-        partial.out[row] = partial.col + c - window.c1;
+        partial.out[row] = partial
+            .col
+            .checked_add(c)
+            .and_then(|value| value.checked_sub(window.c1))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     }
 
     let y0 = x + window.r0_top - window.r1_top;
     for row in x..y0 {
         let source_row = row - x + window.r1_top;
         let c = inn0.map_or(0, |inner| part_entry_i32(inner, source_row));
-        partial.inn[row] = partial.col + c - window.c1;
+        partial.inn[row] = partial
+            .col
+            .checked_add(c)
+            .and_then(|value| value.checked_sub(window.c1))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     }
     for row in y0..z {
-        partial.inn[row] = partial.col - window.c1 + window.c0;
+        partial.inn[row] = partial
+            .col
+            .checked_sub(window.c1)
+            .and_then(|value| value.checked_add(window.c0))
+            .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     }
 
-    partial.col -= window.c1 - window.c0;
+    let delta = window
+        .c1
+        .checked_sub(window.c0)
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
+    partial.col = partial
+        .col
+        .checked_sub(delta)
+        .ok_or(SchurExpansionError::ArithmeticOverflow)?;
     partial.top = y0;
     partial.bot = z;
+    Ok(())
 }
 
 fn ensure_len(values: &mut Vec<i32>, len: usize) {
@@ -709,13 +763,13 @@ fn ensure_len(values: &mut Vec<i32>, len: usize) {
     }
 }
 
-fn add_content_vectors(left: &[i32], right: &[i32]) -> Vec<i32> {
+fn add_content_vectors(left: &[i32], right: &[i32]) -> Option<Vec<i32>> {
     let len = left.len().max(right.len());
     let mut out = Vec::with_capacity(len);
     for index in 0..len {
-        out.push(part_entry_i32(left, index) + part_entry_i32(right, index));
+        out.push(part_entry_i32(left, index).checked_add(part_entry_i32(right, index))?);
     }
-    trim_trailing_zeroes(&out)
+    Some(trim_trailing_zeroes(&out))
 }
 
 fn part_entry_i32(partition: &[i32], index: usize) -> i32 {
@@ -1054,7 +1108,7 @@ mod tests {
     fn fusion_product_handles_invalid_or_too_long_inputs() {
         assert_eq!(
             schur_product_fusion_expansion(&[1], &[1], 0, 1),
-            Err(SchurExpansionError::InvalidPartition)
+            Ok(Vec::new())
         );
         assert_eq!(
             schur_product_fusion_expansion(&[1], &[1], 2, -1),

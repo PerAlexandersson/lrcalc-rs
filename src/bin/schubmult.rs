@@ -26,6 +26,7 @@ struct Args {
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
+    let args = expand_short_options(args, &['r']);
     let mut maple = false;
     let mut string_mode = false;
     let mut rank = 0;
@@ -70,6 +71,32 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         maple,
         string_mode,
     })
+}
+
+fn expand_short_options(args: &[String], value_options: &[char]) -> Vec<String> {
+    let mut expanded = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg == "-" || !arg.starts_with('-') || arg.starts_with("--") || arg.len() <= 2 {
+            expanded.push(arg.clone());
+            continue;
+        }
+
+        for (offset, option) in arg[1..].char_indices() {
+            if !option.is_ascii_alphabetic() {
+                expanded.push(arg.clone());
+                break;
+            }
+            expanded.push(format!("-{option}"));
+            if value_options.contains(&option) {
+                let value_start = 1 + offset + option.len_utf8();
+                if value_start < arg.len() {
+                    expanded.push(arg[value_start..].to_string());
+                }
+                break;
+            }
+        }
+    }
+    expanded
 }
 
 fn parse_vector_pair(args: &[String]) -> Result<[Vec<i32>; 2], String> {
@@ -159,5 +186,26 @@ fn format_schubert_error(error: SchubertError) -> String {
     match error {
         SchubertError::InvalidInput => "invalid input".to_string(),
         SchubertError::ArithmeticOverflow => "arithmetic overflow".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn parser_accepts_clustered_short_options() {
+        let parsed = parse_args(&args(&["-ms", "0", "1", "-", "1", "0"])).unwrap();
+        assert!(parsed.maple);
+        assert!(parsed.string_mode);
+        assert_eq!(parsed.left, vec![0, 1]);
+        assert_eq!(parsed.right, vec![1, 0]);
+
+        let parsed = parse_args(&args(&["-r4", "2", "1", "-", "2", "1"])).unwrap();
+        assert_eq!(parsed.rank, 4);
     }
 }

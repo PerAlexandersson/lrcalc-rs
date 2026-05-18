@@ -54,6 +54,9 @@ To support SymCat and related symmetric-functions resources, see
 - Linux release builds use upstream-compatible SONAME `liblrcalc.so.2`.
 - Compatibility headers for the upstream Python/Sage Cython surface under
   `include/lrcalc/`.
+- Initial C ABI smoke coverage for staged headers, `ivlc_iter` layout,
+  low-level containers, Schur/LR-tableau helpers, Schubert helpers, and the
+  native LR coefficient kernel.
 - C-facing `ivector`, `ivlincomb`, `ilist`, `ivlist`, partition iterator,
   partition, permutation/string, LR-tableau iterator, Schur, fusion, and
   Schubert ABI surfaces.  A release `nm` check currently has no missing
@@ -90,9 +93,11 @@ To support SymCat and related symmetric-functions resources, see
 
 ## Not Yet Implemented
 
-- Full C layout/link smoke tests.
-- Sage rebuild tests against the Rust library.
-- Complete installed-header audit beyond the Python/Sage Cython surface.
+- Broader C layout/link smoke tests against the full upstream header inventory.
+- Sage rebuild tests against the Rust library; the current Sage check is an
+  `LD_PRELOAD` wrapper smoke test.
+- Complete installed-header audit beyond the currently staged public headers,
+  including arbitrary-arity C variadic initializer calls.
 
 ## License
 
@@ -115,6 +120,7 @@ For the public-repository and drop-in release checklist, see
 ```bash
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
+timeout 60s nice -n 10 scripts/c_abi_smoke.sh
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
 timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh

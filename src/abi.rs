@@ -79,8 +79,8 @@ pub struct SkewShapeAbi {
 #[repr(C)]
 pub struct IvlcIter {
     pub ht: *mut IvLinComb,
-    pub index: u32,
-    pub i: u32,
+    pub index: usize,
+    pub i: usize,
 }
 
 const IVLC_HASHTABLE_SZ: u32 = 2003;
@@ -284,7 +284,10 @@ unsafe fn ivlc_add_content_one_fast(ht: *mut IvLinComb, key: *const IVector) -> 
         let elt = unsafe { (*ht).elts.add(i as usize) };
         if unsafe { iv_key_matches_values((*elt).key, data, len) } {
             unsafe {
-                (*elt).value = (*elt).value.wrapping_add(1);
+                let Some(value) = (*elt).value.checked_add(1) else {
+                    return -1;
+                };
+                (*elt).value = value;
             }
             return 0;
         }
@@ -304,11 +307,11 @@ unsafe fn ivlc_add_content_one_fast(ht: *mut IvLinComb, key: *const IVector) -> 
 
     let i = unsafe {
         if (*ht).free_elts != 0 {
-            let i = (*ht).free_elts;
-            (*ht).free_elts = (*(*ht).elts.add(i as usize)).next;
+            let i = (*ht).free_elts as usize;
+            (*ht).free_elts = (*(*ht).elts.add(i)).next;
             i
         } else {
-            let i = (*ht).elts_len;
+            let i = (*ht).elts_len as usize;
             (*ht).elts_len += 1;
             i
         }
@@ -316,12 +319,12 @@ unsafe fn ivlc_add_content_one_fast(ht: *mut IvLinComb, key: *const IVector) -> 
     unsafe {
         (*ht).card = new_card;
         let table_index = ivlc_table_index(hash, (*ht).table_sz);
-        let kv = (*ht).elts.add(i as usize);
+        let kv = (*ht).elts.add(i);
         (*kv).key = stored_key;
         (*kv).value = 1;
         (*kv).hash = hash;
         (*kv).next = *(*ht).table.add(table_index as usize);
-        *(*ht).table.add(table_index as usize) = i;
+        *(*ht).table.add(table_index as usize) = i as u32;
     }
     0
 }
@@ -1434,6 +1437,7 @@ pub unsafe extern "C" fn il_extend(dst: *mut IList, src: *mut IList) -> c_int {
     }
     unsafe {
         ptr::copy((*src).array, (*dst).array.add(dlen), slen);
+        (*dst).length = dlen + slen;
     }
     0
 }
@@ -1708,6 +1712,7 @@ pub unsafe extern "C" fn ivl_extend(dst: *mut IvList, src: *mut IvList) -> c_int
     }
     unsafe {
         ptr::copy((*src).array, (*dst).array.add(dlen), slen);
+        (*dst).length = dlen + slen;
     }
     0
 }
@@ -1792,10 +1797,8 @@ fn abi_perm_length(values: &[i32]) -> c_int {
 fn abi_dimvec(values: &[i32]) -> Option<Vec<i32>> {
     let mut classes = 0usize;
     for &value in values {
-        if value < 0 {
-            return None;
-        }
-        classes = classes.max(usize::try_from(value).ok()?.saturating_add(1));
+        let value = usize::try_from(value).ok()?;
+        classes = classes.max(value.checked_add(1)?);
     }
     let mut out = vec![0; classes];
     for &value in values {
@@ -1819,7 +1822,10 @@ pub unsafe extern "C" fn perm_valid(w: *const IVector) -> c_int {
     let n = values.len();
     let mut seen = vec![false; n];
     for &value in values {
-        let Ok(index) = usize::try_from(value - 1) else {
+        let Some(value) = value.checked_sub(1) else {
+            return 0;
+        };
+        let Ok(index) = usize::try_from(value) else {
             return 0;
         };
         if index >= n || seen[index] {
@@ -2023,7 +2029,11 @@ pub unsafe extern "C" fn perm2string(perm: *const IVector, dimvec: *const IVecto
         };
         while j < limit {
             let wj = perm_values.get(j).copied().unwrap_or((j + 1) as i32);
-            let Ok(target) = usize::try_from(wj - 1) else {
+            let Some(wj) = wj.checked_sub(1) else {
+                unsafe { iv_free(out) };
+                return ptr::null_mut();
+            };
+            let Ok(target) = usize::try_from(wj) else {
                 unsafe { iv_free(out) };
                 return ptr::null_mut();
             };
@@ -3265,9 +3275,10 @@ pub unsafe extern "C" fn ivlc__grow_table(ht: *mut IvLinComb, sz: u32) -> c_int 
         for old_index in 0..(*ht).table_sz {
             let mut i = *(*ht).table.add(old_index as usize);
             while i != 0 {
-                let next = (*(*ht).elts.add(i as usize)).next;
-                let new_index = (*(*ht).elts.add(i as usize)).hash % new_sz;
-                (*(*ht).elts.add(i as usize)).next = *new_table.add(new_index as usize);
+                let elt = (*ht).elts.add(i as usize);
+                let next = (*elt).next;
+                let new_index = (*elt).hash % new_sz;
+                (*elt).next = *new_table.add(new_index as usize);
                 *new_table.add(new_index as usize) = i;
                 i = next;
             }
@@ -3351,11 +3362,11 @@ pub unsafe extern "C" fn ivlc_insert(
     }
     let i = unsafe {
         if (*ht).free_elts != 0 {
-            let i = (*ht).free_elts;
-            (*ht).free_elts = (*(*ht).elts.add(i as usize)).next;
+            let i = (*ht).free_elts as usize;
+            (*ht).free_elts = (*(*ht).elts.add(i)).next;
             i
         } else {
-            let i = (*ht).elts_len;
+            let i = (*ht).elts_len as usize;
             (*ht).elts_len += 1;
             i
         }
@@ -3363,12 +3374,12 @@ pub unsafe extern "C" fn ivlc_insert(
     unsafe {
         (*ht).card = new_card;
         let table_index = ivlc_table_index(hash, (*ht).table_sz);
-        let kv = (*ht).elts.add(i as usize);
+        let kv = (*ht).elts.add(i);
         (*kv).key = key;
         (*kv).value = value;
         (*kv).hash = hash;
         (*kv).next = *(*ht).table.add(table_index as usize);
-        *(*ht).table.add(table_index as usize) = i;
+        *(*ht).table.add(table_index as usize) = i as u32;
         kv
     }
 }
@@ -3432,15 +3443,16 @@ pub unsafe extern "C" fn ivlc_first(ht: *mut IvLinComb, itr: *mut IvlcIter) {
         if ht.is_null() {
             return;
         }
-        let mut index = 0;
-        while index < (*ht).table_sz && *(*ht).table.add(index as usize) == 0 {
+        let mut index = 0usize;
+        let table_sz = (*ht).table_sz as usize;
+        while index < table_sz && *(*ht).table.add(index) == 0 {
             index += 1;
         }
-        if index == (*ht).table_sz {
+        if index == table_sz {
             return;
         }
         (*itr).index = index;
-        (*itr).i = *(*ht).table.add(index as usize);
+        (*itr).i = *(*ht).table.add(index) as usize;
     }
 }
 
@@ -3454,21 +3466,22 @@ pub unsafe extern "C" fn ivlc_next(itr: *mut IvlcIter) {
     }
     unsafe {
         let ht = (*itr).ht;
-        let current = (*ht).elts.add((*itr).i as usize);
+        let current = (*ht).elts.add((*itr).i);
         if (*current).next != 0 {
-            (*itr).i = (*current).next;
+            (*itr).i = (*current).next as usize;
             return;
         }
         let mut index = (*itr).index + 1;
-        while index < (*ht).table_sz && *(*ht).table.add(index as usize) == 0 {
+        let table_sz = (*ht).table_sz as usize;
+        while index < table_sz && *(*ht).table.add(index) == 0 {
             index += 1;
         }
-        if index == (*ht).table_sz {
+        if index == table_sz {
             (*itr).i = 0;
             return;
         }
         (*itr).index = index;
-        (*itr).i = *(*ht).table.add(index as usize);
+        (*itr).i = *(*ht).table.add(index) as usize;
     }
 }
 
@@ -3480,7 +3493,7 @@ pub unsafe extern "C" fn ivlc_key(itr: *const IvlcIter) -> *mut IVector {
     if unsafe { ivlc_good(itr) } == 0 {
         return ptr::null_mut();
     }
-    unsafe { (*(*(*itr).ht).elts.add((*itr).i as usize)).key }
+    unsafe { (*(*(*itr).ht).elts.add((*itr).i)).key }
 }
 
 /// # Safety
@@ -3491,7 +3504,7 @@ pub unsafe extern "C" fn ivlc_value(itr: *const IvlcIter) -> i32 {
     if unsafe { ivlc_good(itr) } == 0 {
         return 0;
     }
-    unsafe { (*(*(*itr).ht).elts.add((*itr).i as usize)).value }
+    unsafe { (*(*(*itr).ht).elts.add((*itr).i)).value }
 }
 
 /// # Safety
@@ -3502,7 +3515,7 @@ pub unsafe extern "C" fn ivlc_keyval(itr: *const IvlcIter) -> *mut IvlcKeyVal {
     if unsafe { ivlc_good(itr) } == 0 {
         return ptr::null_mut();
     }
-    unsafe { (*(*itr).ht).elts.add((*itr).i as usize) }
+    unsafe { (*(*itr).ht).elts.add((*itr).i) }
 }
 
 /// # Safety
@@ -3582,12 +3595,18 @@ pub unsafe extern "C" fn ivlc_add_element(
 
     let existing = unsafe { ivlc_lookup(ht, key, hash) };
     if !existing.is_null() {
+        let Some(new_value) = (unsafe { (*existing).value }).checked_add(c) else {
+            if opt & LC_COPY_KEY == 0 {
+                unsafe { iv_free(key) };
+            }
+            return -1;
+        };
         if opt & LC_COPY_KEY == 0 {
             unsafe { iv_free(key) };
         }
         unsafe {
-            (*existing).value = (*existing).value.wrapping_add(c);
-            if (*existing).value == 0 && opt & LC_FREE_ZERO != 0 {
+            (*existing).value = new_value;
+            if new_value == 0 && opt & LC_FREE_ZERO != 0 {
                 let existing_key = (*existing).key;
                 let existing_hash = (*existing).hash;
                 ivlc_remove(ht, existing_key, existing_hash);
@@ -3638,20 +3657,52 @@ pub unsafe extern "C" fn ivlc_add_multiple(
     if dst.is_null() || src.is_null() {
         return -1;
     }
+    let transfer_keys = opt & LC_COPY_KEY == 0;
     let mut itr = IvlcIter {
         ht: ptr::null_mut(),
         index: 0,
         i: 0,
     };
+    let mut entries = Vec::new();
     unsafe {
         ivlc_first(src, &mut itr);
         while ivlc_good(&itr) != 0 {
             let kv = ivlc_keyval(&itr);
-            let value = c.wrapping_mul((*kv).value);
-            if ivlc_add_element(dst, value, (*kv).key, (*kv).hash, opt) != 0 {
+            let Some(value) = c.checked_mul((*kv).value) else {
+                return -1;
+            };
+            entries.push(((*kv).key, (*kv).hash, value));
+            ivlc_next(&mut itr);
+        }
+        if dst == src {
+            for (key, hash, value) in entries {
+                let kv = ivlc_lookup(dst, key, hash);
+                if kv.is_null() {
+                    return -1;
+                }
+                let Some(new_value) = (*kv).value.checked_add(value) else {
+                    return -1;
+                };
+                (*kv).value = new_value;
+                if new_value == 0 && opt & LC_FREE_ZERO != 0 {
+                    ivlc_remove(dst, key, hash);
+                    iv_free(key);
+                }
+            }
+            return 0;
+        }
+        if transfer_keys && dst != src {
+            ivlc_reset(src);
+        }
+        for (entry_index, (key, hash, value)) in entries.iter().copied().enumerate() {
+            if ivlc_add_element(dst, value, key, hash, opt) != 0 {
+                if transfer_keys && dst != src {
+                    for (remaining_key, _, _) in entries.iter().skip(entry_index + 1) {
+                        iv_free(*remaining_key);
+                    }
+                }
                 return -1;
             }
-            ivlc_next(&mut itr);
         }
     }
     0
@@ -4830,8 +4881,6 @@ mod tests {
             let gcd_input = vector_from_values(&[6, 9, 15]);
             assert_eq!(iv_gcd(gcd_input), 3);
             iv_free(gcd_input);
-            let initialized = iv_new_init(3, 5, 4, 3, 0, 0, 0, 0, 0);
-            assert_eq!(ivector_values(initialized), &[5, 4, 3]);
 
             let conj = part_conj(v);
             assert!(!conj.is_null());
@@ -4843,19 +4892,76 @@ mod tests {
             assert_eq!(il_insert(list, 0, 3), 0);
             assert_eq!(il_poplast(list), 7);
             assert_eq!(il_poplast(list), 3);
-            let initialized_list = il_new_init(2, 2, 11, 13, 0, 0, 0, 0, 0, 0);
-            assert!(!initialized_list.is_null());
-            assert_eq!((*initialized_list).length, 2);
-            assert_eq!(*(*initialized_list).array.add(0), 11);
-            assert_eq!(*(*initialized_list).array.add(1), 13);
+            assert_eq!(il_append(list, 11), 0);
+            let more = il_new(1);
+            assert!(!more.is_null());
+            assert_eq!(il_append(more, 13), 0);
+            assert_eq!(il_append(more, 17), 0);
+            assert_eq!(il_extend(list, more), 0);
+            assert_eq!((*list).length, 3);
+            assert_eq!(*(*list).array.add(0), 11);
+            assert_eq!(*(*list).array.add(1), 13);
+            assert_eq!(*(*list).array.add(2), 17);
 
             iv_free(conj);
-            il_free(initialized_list);
+            il_free(more);
             il_free(list);
-            iv_free(initialized);
             iv_free(dst);
             iv_free(w);
             iv_free(v);
+        }
+    }
+
+    #[test]
+    fn ivlist_extend_and_ivlc_edge_cases_match_abi_contract() {
+        unsafe {
+            assert_eq!(
+                mem::size_of::<IvlcIter>(),
+                mem::size_of::<*mut IvLinComb>() + 2 * mem::size_of::<usize>()
+            );
+
+            let first = ivl_new(1);
+            let second = ivl_new(1);
+            assert!(!first.is_null());
+            assert!(!second.is_null());
+            let v1 = vector_from_values(&[1]);
+            let v2 = vector_from_values(&[2]);
+            assert_eq!(ivl_append(first, v1), 0);
+            assert_eq!(ivl_append(second, v2), 0);
+            assert_eq!(ivl_extend(first, second), 0);
+            assert_eq!((*first).length, 2);
+            assert_eq!(ivector_values(*(*first).array.add(0)), &[1]);
+            assert_eq!(ivector_values(*(*first).array.add(1)), &[2]);
+            ivl_free(second);
+            ivl_free_all(first);
+
+            let lc = ivlc_new(5, 2);
+            assert!(!lc.is_null());
+            let key = vector_from_values(&[3]);
+            let hash = iv_hash(key) as u32;
+            assert_eq!(ivlc_add_element(lc, i32::MAX, key, hash, LC_COPY_KEY), 0);
+            assert_eq!(ivlc_add_element(lc, 1, key, hash, LC_COPY_KEY), -1);
+            let kv = ivlc_lookup(lc, key, hash);
+            assert!(!kv.is_null());
+            assert_eq!((*kv).value, i32::MAX);
+            iv_free(key);
+            ivlc_free_all(lc);
+
+            let dst = ivlc_new(5, 2);
+            let src = ivlc_new(5, 2);
+            assert!(!dst.is_null());
+            assert!(!src.is_null());
+            let moved_key = vector_from_values(&[4]);
+            let moved_hash = iv_hash(moved_key) as u32;
+            assert_eq!(
+                ivlc_add_element(src, 7, moved_key, moved_hash, LC_FREE_ZERO),
+                0
+            );
+            assert_eq!(ivlc_add_multiple(dst, 1, src, LC_FREE_ZERO), 0);
+            assert_eq!(ivlc_card(src), 0);
+            assert_eq!(ivlc_card(dst), 1);
+            ivlc_free_all(src);
+            ivlc_free_all(dst);
         }
     }
 

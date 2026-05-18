@@ -830,7 +830,40 @@ struct TabArgs {
     rows: i32,
 }
 
+fn expand_short_options(args: &[String], value_options: &[char]) -> Vec<String> {
+    let mut expanded = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg == "-" || !arg.starts_with('-') || arg.starts_with("--") || arg.len() <= 2 {
+            expanded.push(arg.clone());
+            continue;
+        }
+
+        let mut split_value = None;
+        for (offset, option) in arg[1..].char_indices() {
+            if !option.is_ascii_alphabetic() {
+                expanded.push(arg.clone());
+                split_value = Some(arg.len());
+                break;
+            }
+            expanded.push(format!("-{option}"));
+            if value_options.contains(&option) {
+                let value_start = 1 + offset + option.len_utf8();
+                if value_start < arg.len() {
+                    expanded.push(arg[value_start..].to_string());
+                }
+                split_value = Some(arg.len());
+                break;
+            }
+        }
+        if split_value.is_none() && arg.len() == 2 {
+            expanded.push(arg.clone());
+        }
+    }
+    expanded
+}
+
 fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
+    let args = expand_short_options(args, &['r', 'c', 'f', 'q']);
     let mut rows = -1;
     let mut cols = -1;
     let mut mode = None;
@@ -862,8 +895,8 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
                     .get(index + 1)
                     .ok_or_else(|| "missing value after -f".to_string())?;
                 let (fusion_rows, level) = parse_i32_pair_option(value, "rows", "level")?;
-                if fusion_rows <= 0 || level < 0 {
-                    return Err("fusion rows must be positive and level nonnegative".to_string());
+                if fusion_rows < 0 || level < 0 {
+                    return Err("fusion rows and level must be nonnegative".to_string());
                 }
                 mode = Some(MultMode::Fusion {
                     rows: fusion_rows,
@@ -876,8 +909,8 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
                     .get(index + 1)
                     .ok_or_else(|| "missing value after -q".to_string())?;
                 let (quantum_rows, level) = parse_i32_pair_option(value, "rows", "level")?;
-                if quantum_rows <= 0 || level < 0 {
-                    return Err("quantum rows must be positive and level nonnegative".to_string());
+                if quantum_rows < 0 || level < 0 {
+                    return Err("quantum rows and level must be nonnegative".to_string());
                 }
                 mode = Some(MultMode::Quantum {
                     rows: quantum_rows,
@@ -905,6 +938,7 @@ fn parse_mult_args(args: &[String]) -> Result<MultArgs, String> {
 }
 
 fn parse_skew_args(args: &[String]) -> Result<SkewArgs, String> {
+    let args = expand_short_options(args, &['r']);
     let mut rows = -1;
     let mut maple = false;
     let mut parts = Vec::new();
@@ -942,6 +976,7 @@ fn parse_skew_args(args: &[String]) -> Result<SkewArgs, String> {
 }
 
 fn parse_coprod_args(args: &[String]) -> Result<CoprodArgs, String> {
+    let args = expand_short_options(args, &[]);
     let mut all = false;
     let mut parts = Vec::new();
     let mut index = 0;
@@ -970,6 +1005,7 @@ fn parse_coprod_args(args: &[String]) -> Result<CoprodArgs, String> {
 }
 
 fn parse_tab_args(args: &[String]) -> Result<TabArgs, String> {
+    let args = expand_short_options(args, &['r']);
     let mut rows = -1;
     let mut parts = Vec::new();
     let mut index = 0;
@@ -1360,6 +1396,49 @@ unsafe fn print_lrit_skewtab(lrit: *const LrTabIter, outer: &[i32], inner: &[i32
         }
         println!();
         row += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn mult_parser_accepts_clustered_short_options() {
+        let parsed = parse_mult_args(&args(&["-mr", "3", "2", "1", "-", "1"])).unwrap();
+        assert!(parsed.maple);
+        assert_eq!(parsed.left, vec![2, 1]);
+        assert_eq!(parsed.right, vec![1]);
+        match parsed.mode {
+            MultMode::Ordinary { rows, cols } => {
+                assert_eq!(rows, 3);
+                assert_eq!(cols, -1);
+            }
+            _ => panic!("expected ordinary mode"),
+        }
+
+        let parsed = parse_mult_args(&args(&["-q0,2", "1", "-", "1"])).unwrap();
+        match parsed.mode {
+            MultMode::Quantum { rows, level } => {
+                assert_eq!(rows, 0);
+                assert_eq!(level, 2);
+            }
+            _ => panic!("expected quantum mode"),
+        }
+    }
+
+    #[test]
+    fn skew_and_tab_parsers_accept_clustered_row_option() {
+        let skew = parse_skew_args(&args(&["-mr", "2", "3", "2", "/", "1"])).unwrap();
+        assert!(skew.maple);
+        assert_eq!(skew.rows, 2);
+
+        let tab = parse_tab_args(&args(&["-r2", "3", "2", "/", "1"])).unwrap();
+        assert_eq!(tab.rows, 2);
     }
 }
 

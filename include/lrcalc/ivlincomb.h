@@ -1,6 +1,7 @@
 #ifndef LRCALC_IVLINCOMB_H
 #define LRCALC_IVLINCOMB_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "ivector.h"
@@ -28,8 +29,8 @@ typedef struct ivlincomb {
 
 typedef struct ivlc_iter {
   ivlincomb *ht;
-  uint32_t index;
-  uint32_t i;
+  size_t index;
+  size_t i;
 } ivlc_iter;
 
 #define IVLC_HASHTABLE_SZ 2003
