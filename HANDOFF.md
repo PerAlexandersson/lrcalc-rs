@@ -20,17 +20,16 @@ engines.
   permutation/string helpers, LR-tableau iterators, Schur/fusion functions,
   and Schubert functions.  A release `nm` diff against upstream currently has
   no missing symbols; the only extra export is `lrcalc_new_abi_version`.
-- `src/schur.rs` contains Schur product and skew Schur expansion.  Product
-  expansion now realizes `s_mu s_nu` as the skew Schur function of a
-  disconnected skew shape, so it shares the skew expansion backend instead of
-  looping over scalar LR coefficients.  Coproduct expands against the
-  containing rectangle and applies Buch's redundancy filter.  Skew expansion
-  first applies an upstream-style `optim_skew` shape reduction, folds forced
-  components into a beta prefix, and then uses the variable-content beta
-  tableau enumerator so all residual contents are accumulated in one search.
-  Fusion products currently use the upstream test identity: compute the
-  row-bounded ordinary product, affine-reduce every term, and merge signed
-  collisions.
+- `src/schur.rs` contains native Schur product, skew Schur, and coproduct
+  expansion.  Product expansion realizes `s_mu s_nu` as the skew Schur function
+  of a disconnected skew shape, and coproduct expands against the containing
+  rectangle with Buch's redundancy filter.  The native Rust skew path still uses
+  the variable-content beta tableau enumerator after `optim_skew`.  The C ABI
+  `schur_skew` path now special-cases beta-empty skew Schur expansion through
+  upstream-style `optim_skew`, direct `lrit_expand`, and a specialized
+  `IvLinComb` insertion path.  Fusion products currently use the upstream test
+  identity: compute the row-bounded ordinary product, affine-reduce every term,
+  and merge signed collisions.
 - `src/lrcoef.rs` contains the primary Buch-style LR coefficient engine:
   compactification, pruned tableau search, interior counts, dimension, and
   stretch-cache helpers.  It also exposes beta-prefix LR counts for
@@ -90,8 +89,8 @@ iteration.
 `timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh` passed on
 2026-05-18 and wrote `notes/SAGE_LRCALC_BENCHMARK.md`.  It compares Sage's
 wrapper using conda-forge C `liblrcalc` against the same wrapper using the Rust
-`liblrcalc` via `LD_PRELOAD`.  Current geometric mean is `0.951x` Rust/Sage-C,
-median is `1.049x`, and correctness signatures match on all 11 cases.
+`liblrcalc` via `LD_PRELOAD`.  Current geometric mean is `0.965x` Rust/Sage-C,
+median is `1.034x`, and correctness signatures match on all 11 cases.
 
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
@@ -106,13 +105,12 @@ weights of a fixed label bound.
 Optimized skew expansion passed on 2026-05-16.  The regression test exhausts
 all contained skew shapes of outer size at most `7` and row bounds
 `[-1, 0, 1, 2, 3, 4]`, comparing the optimized path with scalar LR expansion.
-On `skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both took about
-`0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust improved from
-about `7.2s` to `4.1s` after `optim_skew`, then to `3.18s` after packed
-content accumulation, then to `1.85s` after maintaining packed keys
-incrementally during tableau search, then to `1.69s` after replacing the packed
-content `HashMap<u128, u128>` with a specialized open-addressing table;
-upstream C took about `1.37s`.
+The ABI `schur_skew` path now uses optimized shape reduction plus direct
+`lrit_expand` content accumulation.  In the current Sage wrapper benchmark,
+`skew small` is `1.006x` Rust/Sage-C and `skew optimized` is `1.067x`.  A
+larger local 23729-term probe for `30 27 24 21 18 15 / 15 12 9 6 3` had a best
+Rust run around `1.40s` versus upstream C around `1.43s`, with run-to-run
+noise; treat the dense skew ABI path as near parity, not a solved exact tie.
 
 Beta-prefix sanity checks passed on 2026-05-16.  With `beta=[]`, beta counts
 match ordinary LR full/interior counts on small triples.  With a strictly
@@ -190,13 +188,12 @@ fixed-argument compatibility shims covering the first eight initializer values.
 `scripts/schur_schubert_ffi_bench.sh 500` was added and passed on 2026-05-17
 against `/tmp/lrcalc-upstream/src/.libs/liblrcalc.so`.  It verifies and times
 Schur product, skew Schur, coproduct, fusion product, Schubert permutation
-products, and Schubert string products in-process through upstream C FFI.
-Current ratios, reported as Rust/upstream C, were: product `1.07x`, skew
-`5.34x`, coproduct `0.80x`, fusion `1.09x`, Schubert permutations `0.29x`,
-and Schubert strings `0.25x`.  The Schubert permutation diagnostic now includes
-18 cases up to a selected S7 product; Rust ranges from about `0.04x`--`0.10x`
-on tiny fixed-overhead products to `0.32x` on the S7 medium case.  This makes
-skew Schur the main remaining performance gap in the Schur/Schubert surface.
+products, and Schubert string products in-process through upstream C FFI.  After
+the direct `lrit_expand` ABI path, recent raw skew suite runs are much closer
+than the old `5.34x` baseline but still noisy, roughly `1.3x`--`1.5x`
+Rust/upstream C on selected optimized cases.  The Sage benchmark rows are
+closer (`1.006x` and `1.067x`).  Schubert remains clearly faster in Rust in
+both raw diagnostics and Sage wrapper timing.
 
 Basic LR coefficient counting now uses a compact count-only tableau box with
 32-bit indices, matching upstream's 32-byte `lrcoef_box` shape more closely.
@@ -219,10 +216,9 @@ the public Rust path keeps a Rust fallback for errors and overflow.
 
 ## Main Gaps
 
-- Continue low-level skew expansion tuning.  The high-level algorithm now
-  matches upstream more closely, but dense cases still trail upstream C because
-  the Rust path lacks the exact tight `lrit_next`-style iterator and packed
-  output accumulator.
+- Broaden the skew benchmark corpus.  The ABI path now uses the same direct
+  `lrit_expand` shape as upstream; remaining skew work is mostly small/medium
+  constant factors and Rust ABI table overhead.
 - Optimize fusion products by using the newly exposed `optim_fusion` path in
   `schur_mult_fusion` rather than reducing a full row-bounded product.
 - Add C smoke tests for the ABI surface, including struct layout, Schubert, and
@@ -230,8 +226,8 @@ the public Rust path keeps a Rust fallback for errors and overflow.
 - Audit and complete installed headers beyond the Python/Sage Cython surface.
 - Expand Sage tests beyond the current `LD_PRELOAD` smoke test, or rebuild
   Sage's lrcalc package against the Rust install prefix.
-- Decide which native LR engine should serve each workload class after broader
-  benchmarks.
+- Decide whether native Rust skew expansion should keep the beta enumerator as
+  its default or route beta-empty cases through the ABI-style lrit accumulator.
 
 ## Next Useful Work
 

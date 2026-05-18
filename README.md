@@ -67,12 +67,13 @@ To support SymCat and related symmetric-functions resources, see
   compactification and branch pruning.
 - Beta-prefix LR counts for skew shape `outer/inner`, content `content`, and a
   virtual Yamanouchi prefix `beta`, including paired full/interior counts.
-- Variable-content beta-prefix expansion, used by skew Schur expansion with
-  `beta=[]` and by skew Kostka weight expansion with dominant finite `beta`.
-- Upstream-style skew-shape optimization for skew Schur expansion, folding
-  forced components into the beta prefix before the shared content expansion.
-- Schur product and coproduct expansion via the same shared skew Schur backend,
-  using disconnected skew shapes and upstream-style coproduct filtering.
+- Variable-content beta-prefix expansion, used by native Rust skew/content
+  experiments and by skew Kostka weight expansion with dominant finite `beta`.
+- Upstream-style skew-shape optimization for skew Schur expansion.  The C ABI
+  `schur_skew` path uses optimized shape reduction plus direct `lrit_expand`
+  accumulation for the beta-empty case.
+- Schur product and coproduct expansion via skew Schur backends, using
+  disconnected skew shapes and upstream-style coproduct filtering.
 - Fusion product expansion by row-bounded Schur multiplication followed by
   upstream-style affine fusion reduction.
 - GT-chain LR counter, including relative-interior and dimension variants.
@@ -180,18 +181,16 @@ parity.  On `lrcoef_ffi_bench.sh 10000 large-few-parts`, Rust is faster overall
 at `0.96x` upstream C.
 
 Current `schur_schubert_ffi_bench.sh 500` result: Schur product, coproduct, and
-fusion are near upstream C parity (`1.07x`, `0.80x`, and `1.09x`
-Rust/upstream respectively), skew Schur is slower on the included optimized
-skew cases (`5.34x`).  On the broader Schubert diagnostic suite, Rust is faster
-overall (`0.29x` for permutations and `0.25x` for strings), with the advantage
-narrowing from tiny fixed-overhead cases to the larger S6/S7 examples.
+fusion are near upstream C parity.  After the direct `lrit_expand` ABI path,
+raw in-process skew Schur runs are much closer than the old `5.34x` baseline,
+with recent selected runs around `1.3x`--`1.5x` Rust/upstream C.  On the broader
+Schubert diagnostic suite, Rust is faster overall, with the advantage narrowing
+from tiny fixed-overhead cases to the larger S6/S7 examples.
 
-Current optimized skew expansion snapshot: on
-`skew 20 18 16 14 12 / 10 8 6 4 2`, Rust and upstream C both take about
-`0.003s`.  On `skew 30 27 24 21 18 15 / 15 12 9 6 3`, Rust takes about
-`1.69s` versus upstream C at about `1.37s`; before the optimizer, packed
-accumulator, incremental packed keys, and custom packed-content table the Rust
-path took about `7.2s`.
+Current Sage wrapper benchmark result: geometric mean `0.965x` Rust/Sage-C
+across 11 cases, with matching correctness signatures.  The skew rows are near
+parity (`1.006x` and `1.067x`), and Schubert multiplication is faster in Rust
+through Sage (`0.445x`).
 
 Benchmark scripts live under `scripts/`.  Most expect an upstream `lrcalc`
 binary via `UPSTREAM_BIN`; see each script's help text before running.
