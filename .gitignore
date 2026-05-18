@@ -1,1 +1,19 @@
-/target
+/target/
+
+# Local benchmark and profiling output.
+/criterion/
+/perf.data
+/perf.data.*
+/*.profraw
+/*.profdata
+/*.json.gz
+
+# Editor and operating-system noise.
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Local environment files.
+.env
+.env.*

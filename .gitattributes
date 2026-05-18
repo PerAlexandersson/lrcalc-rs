@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.rs text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+
+COPYING text eol=lf
+Cargo.lock text eol=lf
