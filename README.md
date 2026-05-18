@@ -115,6 +115,7 @@ For the public-repository and drop-in release checklist, see
 timeout 60s nice -n 10 cargo test
 timeout 60s nice -n 10 cargo build --release
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
+timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 ```
 
 The Rust library target is named `lrcalc`, so release builds should produce
@@ -122,6 +123,10 @@ The Rust library target is named `lrcalc`, so release builds should produce
 `scripts/stage_liblrcalc_prefix.sh` creates a local prefix under
 `target/lrcalc-rs-prefix` with `include/lrcalc/`, `liblrcalc.a`,
 `liblrcalc.so`, `liblrcalc.so.2`, and `liblrcalc.so.2.0.0`.
+
+The Sage smoke script expects a Sage-enabled Python at
+`/workspace/.conda-envs/sage/bin/python` by default.  Override with
+`SAGE_PYTHON=/path/to/sage/python` when using another Sage installation.
 
 ## Useful Commands
 

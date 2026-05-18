@@ -75,6 +75,18 @@ the staged Rust `liblrcalc` prefix and checks `lrcoef`, `mult`, `skew`,
 `coprod`, `mult_fusion`, Schubert multiplication, string Schubert
 multiplication, and LR-tableau iteration from Python.
 
+Sage 10.8 was installed from conda-forge on 2026-05-18:
+
+- Miniforge: `/workspace/.tools/miniforge3`
+- Sage environment: `/workspace/.conda-envs/sage`
+
+`timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh` passed on
+2026-05-18.  It runs Sage's `sage.libs.lrcalc.lrcalc` wrapper with
+`LD_PRELOAD=target/lrcalc-rs-prefix/lib/liblrcalc.so.2`, verifies through
+`/proc/self/maps` that the Rust `liblrcalc.so.2.0.0` is loaded, and checks
+`lrcoef`, `mult`, `skew`, `coprod`, Schubert multiplication, and LR-tableau
+iteration.
+
 Product/skew Schur expansion sanity checks passed on 2026-05-16.  The Rust
 CLI agrees with upstream C after sorting output lines for:
 `mult 2 1 - 2 1` and `skew 3 2 1 / 2 1`.  CLI line order is not yet treated
@@ -210,7 +222,8 @@ the public Rust path keeps a Rust fallback for errors and overflow.
 - Add C smoke tests for the ABI surface, including struct layout, Schubert, and
   `schubmult`.
 - Audit and complete installed headers beyond the Python/Sage Cython surface.
-- Add Sage rebuild tests against the Rust `liblrcalc`.
+- Expand Sage tests beyond the current `LD_PRELOAD` smoke test, or rebuild
+  Sage's lrcalc package against the Rust install prefix.
 - Decide which native LR engine should serve each workload class after broader
   benchmarks.
 

@@ -32,6 +32,7 @@ If an upstream checkout is available at `/tmp/lrcalc-upstream`, also run:
 
 ```bash
 timeout 120s nice -n 10 scripts/python_bindings_smoke.sh
+timeout 120s nice -n 10 scripts/sage_bindings_smoke.sh
 ```
 
 When comparing against upstream C, point benchmark scripts at an upstream build
