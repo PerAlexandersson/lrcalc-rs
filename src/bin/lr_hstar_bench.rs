@@ -34,6 +34,7 @@ struct PreparedCase {
 
 struct CaseReport {
     label: &'static str,
+    coefficient: String,
     dimension: usize,
     h_len: usize,
     samples: usize,
@@ -336,12 +337,13 @@ fn print_markdown_result(result: &BenchResult) {
         result.hstar_build_vs_direct_scaled()
     );
     println!();
-    println!("| Case | Dimension | h* len | Samples | Base value | Value at stretch | Buch weak | Buch strict | GT peak |");
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("| Case | Base coefficient | Dimension | h* len | Samples | Base value | Value at stretch | Buch weak | Buch strict | GT peak |");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|");
     for case in &result.cases {
         println!(
-            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |",
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |",
             markdown_cell(case.label),
+            markdown_cell(&case.coefficient),
             case.dimension,
             case.h_len,
             case.samples,
@@ -365,6 +367,7 @@ fn case_reports(prepared: &[PreparedCase]) -> Vec<CaseReport> {
                 .unwrap_or_else(|_| panic!("GT interior stats failed for {}", case.label));
             CaseReport {
                 label: case.label,
+                coefficient: lrcoef_expr(&case.outer, &case.inner, &case.content),
                 dimension: prepared_case.polynomial.dimension,
                 h_len: prepared_case.polynomial.h_vector.len(),
                 samples: prepared_case.polynomial.sample_points.len(),
@@ -436,6 +439,33 @@ fn bigint_sink(value: &BigInt) -> u128 {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn lrcoef_expr(outer: &[i32], inner: &[i32], content: &[i32]) -> String {
+    format!(
+        "c^{}_{},{}",
+        format_partition(outer),
+        format_partition(inner),
+        format_partition(content)
+    )
+}
+
+fn format_partition(parts: &[i32]) -> String {
+    let trimmed = parts
+        .iter()
+        .copied()
+        .take_while(|&part| part != 0)
+        .collect::<Vec<_>>();
+    if trimmed.is_empty() {
+        "()".to_string()
+    } else {
+        let body = trimmed
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({body})")
+    }
 }
 
 impl BenchResult {

@@ -27,6 +27,7 @@ struct Family {
 
 struct FamilyReport {
     label: &'static str,
+    coefficient: String,
     dimension: usize,
     h_len: usize,
     samples: usize,
@@ -122,6 +123,7 @@ fn run_family(family: &Family, options: &Options) -> FamilyReport {
 
     FamilyReport {
         label: family.label,
+        coefficient: lrcoef_expr(family.outer, family.inner, family.content),
         dimension: polynomial.dimension,
         h_len: polynomial.h_vector.len(),
         samples: polynomial.sample_points.len(),
@@ -271,13 +273,14 @@ fn print_markdown(reports: &[FamilyReport], options: &Options) {
         markdown_cell(&options.upstream_bin)
     );
     println!();
-    println!("| Family | Stretch | Dimension | h* len | Samples | h* build | h* eval total | Value | Upstream direct |");
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---|");
+    println!("| Family | Base coefficient | Stretch | Dimension | h* len | Samples | h* build | h* eval total | Value | Upstream direct |");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---|");
     for family in reports {
         for stretch in &family.stretches {
             println!(
-                "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} |",
+                "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} |",
                 markdown_cell(family.label),
+                markdown_cell(&family.coefficient),
                 stretch.stretch,
                 family.dimension,
                 family.h_len,
@@ -332,6 +335,33 @@ fn format_duration(duration: Duration) -> String {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn lrcoef_expr(outer: &[i32], inner: &[i32], content: &[i32]) -> String {
+    format!(
+        "c^{}_{},{}",
+        format_partition(outer),
+        format_partition(inner),
+        format_partition(content)
+    )
+}
+
+fn format_partition(parts: &[i32]) -> String {
+    let trimmed = parts
+        .iter()
+        .copied()
+        .take_while(|&part| part != 0)
+        .collect::<Vec<_>>();
+    if trimmed.is_empty() {
+        "()".to_string()
+    } else {
+        let body = trimmed
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({body})")
+    }
 }
 
 fn families() -> Vec<Family> {

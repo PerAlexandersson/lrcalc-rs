@@ -124,6 +124,7 @@ struct BenchResult {
 
 struct CaseDiagnostic {
     label: &'static str,
+    coefficient: String,
     value: i64,
     skew_size: i32,
     labels: usize,
@@ -264,12 +265,13 @@ fn print_markdown_result(result: &BenchResult) {
         result.geometric_mean_ratio()
     );
     println!();
-    println!("| Case | Value | Skew size | Labels | Rust | Upstream C | Rust/C |");
-    println!("|---|---:|---:|---:|---:|---:|---:|");
+    println!("| Case | Coefficient | Value | Skew size | Labels | Rust | Upstream C | Rust/C |");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|");
     for diagnostic in &result.diagnostics {
         println!(
-            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{:.3}x` |",
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{:.3}x` |",
             markdown_cell(diagnostic.label),
+            markdown_cell(&diagnostic.coefficient),
             diagnostic.value,
             diagnostic.skew_size,
             diagnostic.labels,
@@ -356,6 +358,7 @@ fn case_diagnostics(repeat: usize, cases: &[Case], upstream: &Upstream) -> Vec<C
         black_box((rust_sink, c_sink));
         diagnostics.push(CaseDiagnostic {
             label: case.label,
+            coefficient: lrcoef_expr(&case.outer, &case.inner, &case.content),
             value,
             skew_size,
             labels,
@@ -610,6 +613,33 @@ impl CaseDiagnostic {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn lrcoef_expr(outer: &[i32], inner: &[i32], content: &[i32]) -> String {
+    format!(
+        "c^{}_{},{}",
+        format_partition(outer),
+        format_partition(inner),
+        format_partition(content)
+    )
+}
+
+fn format_partition(parts: &[i32]) -> String {
+    let trimmed = parts
+        .iter()
+        .copied()
+        .take_while(|&part| part != 0)
+        .collect::<Vec<_>>();
+    if trimmed.is_empty() {
+        "()".to_string()
+    } else {
+        let body = trimmed
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({body})")
+    }
 }
 
 unsafe fn symbol<T: Copy>(handle: *mut libc::c_void, name: &[u8]) -> T {

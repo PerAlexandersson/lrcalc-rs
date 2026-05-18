@@ -25,6 +25,7 @@ struct BenchResult {
 
 struct CaseDiagnostic {
     label: &'static str,
+    coefficient: String,
     value: u128,
     shape_size: i32,
     labels: usize,
@@ -139,12 +140,15 @@ fn print_markdown_result(result: &BenchResult) {
         result.geometric_mean_ratio()
     );
     println!();
-    println!("| Case | Value | Shape size | Labels | Direct DP | LR path | Direct/LR |");
-    println!("|---|---:|---:|---:|---:|---:|---:|");
+    println!(
+        "| Case | Coefficient | Value | Shape size | Labels | Direct DP | LR path | Direct/LR |"
+    );
+    println!("|---|---|---:|---:|---:|---:|---:|---:|");
     for diagnostic in &result.diagnostics {
         println!(
-            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{:.3}x` |",
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{:.3}x` |",
             markdown_cell(diagnostic.label),
+            markdown_cell(&diagnostic.coefficient),
             diagnostic.value,
             diagnostic.shape_size,
             diagnostic.labels,
@@ -169,6 +173,7 @@ fn case_diagnostics(repeat: usize, cases: &[Case]) -> Vec<CaseDiagnostic> {
             black_box((fast_sink, lr_sink));
             CaseDiagnostic {
                 label: case.label,
+                coefficient: kostka_expr(&case.shape, &case.weight),
                 value,
                 shape_size: case.shape.iter().sum(),
                 labels: case.weight.iter().take_while(|&&part| part != 0).count(),
@@ -265,6 +270,28 @@ impl CaseDiagnostic {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn kostka_expr(shape: &[i32], weight: &[i32]) -> String {
+    format!("K_{},{}", format_partition(shape), format_partition(weight))
+}
+
+fn format_partition(parts: &[i32]) -> String {
+    let trimmed = parts
+        .iter()
+        .copied()
+        .take_while(|&part| part != 0)
+        .collect::<Vec<_>>();
+    if trimmed.is_empty() {
+        "()".to_string()
+    } else {
+        let body = trimmed
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({body})")
+    }
 }
 
 fn cases() -> Vec<Case> {

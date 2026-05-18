@@ -47,6 +47,7 @@ struct BenchResult {
 
 struct CaseReport {
     label: String,
+    coefficient: String,
     full: u128,
     interior: u128,
     k_full_peak: usize,
@@ -196,12 +197,13 @@ fn print_markdown_result(result: &BenchResult) {
         result.lr_vs_hybrid()
     );
     println!();
-    println!("| Case | Full | Interior | Kostka full peak | Kostka interior peak | LR full peak | LR interior peak | Hybrid mode | Hybrid full peak | Hybrid interior peak |");
-    println!("|---|---:|---:|---:|---:|---:|---:|---|---:|---:|");
+    println!("| Case | Coefficient | Full | Interior | Kostka full peak | Kostka interior peak | LR full peak | LR interior peak | Hybrid mode | Hybrid full peak | Hybrid interior peak |");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|");
     for case in &result.cases {
         println!(
-            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |",
+            "| {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |",
             markdown_cell(&case.label),
+            markdown_cell(&case.coefficient),
             case.full,
             case.interior,
             case.k_full_peak,
@@ -294,6 +296,7 @@ fn case_reports(cases: &[ScaledCase]) -> Vec<CaseReport> {
             let stats = case_stats(case);
             CaseReport {
                 label: case.label.clone(),
+                coefficient: stretched_kostka_lr_expr(case),
                 full: stats.kostka.full,
                 interior: stats.kostka.interior,
                 k_full_peak: stats.kostka.full_peak_states,
@@ -368,6 +371,35 @@ impl BenchResult {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn stretched_kostka_lr_expr(case: &ScaledCase) -> String {
+    format!(
+        "K_{},{} = c^{}_{},{}",
+        format_partition(&case.shape),
+        format_partition(&case.weight),
+        format_partition(&case.outer),
+        format_partition(&case.inner),
+        format_partition(&case.content)
+    )
+}
+
+fn format_partition(parts: &[i32]) -> String {
+    let trimmed = parts
+        .iter()
+        .copied()
+        .take_while(|&part| part != 0)
+        .collect::<Vec<_>>();
+    if trimmed.is_empty() {
+        "()".to_string()
+    } else {
+        let body = trimmed
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({body})")
+    }
 }
 
 const BASE_CASES: &[BaseCase] = &[
