@@ -233,6 +233,99 @@ unsafe fn ivlc_lookup_index(ht: *mut IvLinComb, key: *const IVector, hash: u32) 
     0
 }
 
+unsafe fn iv_hash_values(data: *const i32, len: u32) -> u32 {
+    let mut h = len;
+    for index in 0..len as usize {
+        let value = unsafe { *data.add(index) };
+        h = ((h << 5) ^ (h >> 27)).wrapping_add(value as u32);
+    }
+    h
+}
+
+unsafe fn iv_key_matches_values(key: *const IVector, data: *const i32, len: u32) -> bool {
+    if key.is_null() || unsafe { (*key).length != len } {
+        return false;
+    }
+    let key_data = unsafe { ivector_data(key) };
+    for index in 0..len as usize {
+        if unsafe { *key_data.add(index) != *data.add(index) } {
+            return false;
+        }
+    }
+    true
+}
+
+unsafe fn iv_new_copy_values(data: *const i32, len: u32) -> *mut IVector {
+    let Some(size) = ivector_alloc_size(len) else {
+        return ptr::null_mut();
+    };
+    let copy = unsafe { libc::malloc(size) }.cast::<IVector>();
+    if copy.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        (*copy).length = len;
+        ptr::copy_nonoverlapping(data, ivector_data_mut(copy), len as usize);
+    }
+    copy
+}
+
+unsafe fn ivlc_add_content_one_fast(ht: *mut IvLinComb, key: *const IVector) -> c_int {
+    if ht.is_null() || key.is_null() || unsafe { (*ht).table_sz == 0 } {
+        return -1;
+    }
+    let len = unsafe { (*key).length };
+    let data = unsafe { ivector_data(key) };
+    let hash = unsafe { iv_hash_values(data, len) };
+
+    let table_index = ivlc_table_index(hash, unsafe { (*ht).table_sz });
+    let mut i = unsafe { *(*ht).table.add(table_index as usize) };
+    while i != 0 {
+        let elt = unsafe { (*ht).elts.add(i as usize) };
+        if unsafe { iv_key_matches_values((*elt).key, data, len) } {
+            unsafe {
+                (*elt).value = (*elt).value.wrapping_add(1);
+            }
+            return 0;
+        }
+        i = unsafe { (*elt).next };
+    }
+
+    let Some(new_card) = unsafe { (*ht).card }.checked_add(1) else {
+        return -1;
+    };
+    if unsafe { ivlc_makeroom_inner(ht, new_card) } != 0 {
+        return -1;
+    }
+    let stored_key = unsafe { iv_new_copy_values(data, len) };
+    if stored_key.is_null() {
+        return -1;
+    }
+
+    let i = unsafe {
+        if (*ht).free_elts != 0 {
+            let i = (*ht).free_elts;
+            (*ht).free_elts = (*(*ht).elts.add(i as usize)).next;
+            i
+        } else {
+            let i = (*ht).elts_len;
+            (*ht).elts_len += 1;
+            i
+        }
+    };
+    unsafe {
+        (*ht).card = new_card;
+        let table_index = ivlc_table_index(hash, (*ht).table_sz);
+        let kv = (*ht).elts.add(i as usize);
+        (*kv).key = stored_key;
+        (*kv).value = 1;
+        (*kv).hash = hash;
+        (*kv).next = *(*ht).table.add(table_index as usize);
+        *(*ht).table.add(table_index as usize) = i;
+    }
+    0
+}
+
 unsafe fn ivlc_makeroom_inner(ht: *mut IvLinComb, sz: u32) -> c_int {
     if ht.is_null() {
         return -1;
@@ -2908,9 +3001,7 @@ unsafe fn lrit_count_fast(lrit: *mut LrTabIter) -> *mut IvLinComb {
     }
     while unsafe { (*lrit).size >= 0 } {
         let cont = unsafe { (*lrit).cont };
-        if cont.is_null()
-            || unsafe { ivlc_add_element(lc, 1, cont, iv_hash(cont) as u32, LC_COPY_KEY) } != 0
-        {
+        if unsafe { ivlc_add_content_one_fast(lc, cont) } != 0 {
             unsafe { ivlc_free_all(lc) };
             return ptr::null_mut();
         }
