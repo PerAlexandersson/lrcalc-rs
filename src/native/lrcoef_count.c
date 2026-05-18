@@ -163,10 +163,7 @@ static inline uint64_t mix_key(packed_key value)
 {
   uint64_t low = (uint64_t)value;
   uint64_t high = (uint64_t)(value >> 64);
-  uint64_t hash = low ^ (high * UINT64_C(0x9e3779b97f4a7c15));
-  hash ^= hash >> 32;
-  hash ^= hash >> 16;
-  return hash;
+  return mix_u64(low ^ ((high << 32) | (high >> 32)));
 }
 
 static uint32_t bits_needed_u64(uint64_t value)
