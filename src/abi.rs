@@ -2995,7 +2995,21 @@ unsafe fn lrit_count_fast(lrit: *mut LrTabIter) -> *mut IvLinComb {
     if lrit.is_null() {
         return ptr::null_mut();
     }
-    let lc = ivlc_new(IVLC_HASHTABLE_SZ, IVLC_ARRAY_SZ);
+    let lrit_size = unsafe { (*lrit).size };
+    let content_len = unsafe {
+        let cont = (*lrit).cont;
+        if cont.is_null() {
+            0
+        } else {
+            (*cont).length
+        }
+    };
+    let (table_sz, elts_sz) = if lrit_size >= 8 && content_len >= 6 {
+        (65_537, 32_768)
+    } else {
+        (IVLC_HASHTABLE_SZ, IVLC_ARRAY_SZ)
+    };
+    let lc = ivlc_new(table_sz, elts_sz);
     if lc.is_null() {
         return ptr::null_mut();
     }
