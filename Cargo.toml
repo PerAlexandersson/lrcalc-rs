@@ -5,6 +5,7 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 readme = "README.md"
 description = "A Rust implementation providing a drop-in liblrcalc ABI and CLI surface."
+repository = "https://github.com/PerAlexandersson/lrcalc-rs"
 keywords = ["lrcalc", "schur", "kostka", "schubert", "combinatorics"]
 
 [lib]

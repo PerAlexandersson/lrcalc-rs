@@ -5,11 +5,10 @@ Anders Buch's `lrcalc` library and command-line tool.
 
 The project/repository name is `lrcalc-rs`; the installed compatibility surface
 keeps the classic names: `liblrcalc.so`, `liblrcalc.a`, `lrcalc`, `schubmult`,
-and eventually `include/lrcalc/...`.
+and `include/lrcalc/...`.
 
-The current crate has a working single Littlewood-Richardson coefficient path,
-several independent LR/Kostka counting engines, Ehrhart interpolation
-experiments for stretched LR coefficients, and benchmark harnesses against
+The crate includes Littlewood-Richardson, Schur, fusion, coproduct, Schubert,
+Kostka, and stretched-coefficient paths, with benchmark harnesses against
 upstream C.
 
 ## Upstream, Credits, and Ecosystem
@@ -54,9 +53,9 @@ To support SymCat and related symmetric-functions resources, see
 - Linux release builds use upstream-compatible SONAME `liblrcalc.so.2`.
 - Compatibility headers for the upstream Python/Sage Cython surface under
   `include/lrcalc/`.
-- Initial C ABI smoke coverage for staged headers, shared and static library
-  links, `ivlc_iter` layout, low-level containers, Schur/LR-tableau helpers,
-  Schubert helpers, staged CLI binaries, and the native LR coefficient kernel.
+- C ABI smoke coverage for staged headers, shared and static library links,
+  `ivlc_iter` layout, low-level containers, Schur/LR-tableau helpers, Schubert
+  helpers, staged CLI binaries, and the native LR coefficient kernel.
 - C-facing `ivector`, `ivlincomb`, `ilist`, `ivlist`, partition iterator,
   partition, permutation/string, LR-tableau iterator, Schur, fusion, and
   Schubert ABI surfaces.  A release `nm` check currently has no missing
@@ -91,7 +90,7 @@ To support SymCat and related symmetric-functions resources, see
   beta-prefix generalization.
 - Benchmark binaries and shell scripts comparing Rust paths with upstream C.
 
-## Not Yet Implemented
+## Known Gaps Before A Drop-In Release
 
 - Broader C layout/link smoke tests against the full upstream header inventory.
 - Sage rebuild tests against the Rust library; the current Sage check is an
@@ -185,7 +184,8 @@ run.
 Benchmark scripts live under `scripts/`.  CLI-oracle scripts usually take
 `UPSTREAM_BIN`; FFI benchmark scripts usually take `UPSTREAM_LIB` or
 `UPSTREAM_LIB_DIR`.  Sage benchmark output defaults to `target/`; set `OUT=...`
-only when intentionally saving a local report.
+only when intentionally saving a local report.  See
+[scripts/README.md](scripts/README.md) for the script index.
 
 ## Reference
 

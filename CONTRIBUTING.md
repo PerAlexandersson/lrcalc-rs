@@ -40,7 +40,8 @@ timeout 120s nice -n 10 scripts/sage_lrcalc_bench.sh
 
 When comparing against upstream C, point benchmark scripts at an upstream build
 with `UPSTREAM_LIB`, `UPSTREAM_LIB_DIR`, or `UPSTREAM_BIN` as appropriate.
-The scripts under `scripts/` print the variables they expect.
+The scripts under `scripts/` print the variables they expect; see
+[scripts/README.md](scripts/README.md) for the script index.
 
 ## Compatibility Rules
 
