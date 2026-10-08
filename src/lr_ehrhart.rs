@@ -209,19 +209,35 @@ where
     })
 }
 
+/// Evaluate `sum_k h_k binom(stretch + dimension - k, dimension)`.
+///
+/// The binomial top is formed in `BigInt`, so every `u64` stretch is
+/// supported, including `u64::MAX`.
 pub fn evaluate_h_vector(h_vector: &[BigInt], dimension: usize, stretch: u64) -> BigInt {
     let mut total = BigInt::zero();
     for (k, h_k) in h_vector.iter().enumerate().take(dimension + 1) {
         if h_k.is_zero() {
             continue;
         }
-        let top = stretch
-            .checked_add(dimension as u64)
-            .and_then(|value| value.checked_sub(k as u64))
-            .expect("dimension index should not exceed stretch + dimension");
-        total += h_k * binomial_bigint(top, dimension as u64);
+        let top = BigInt::from(stretch) + BigInt::from(dimension) - BigInt::from(k);
+        total += h_k * binomial_bigint_top(&top, dimension);
     }
     total
+}
+
+/// `binom(top, k)` for an arbitrary-precision `top >= 0`.
+fn binomial_bigint_top(top: &BigInt, k: usize) -> BigInt {
+    let mut result = BigInt::one();
+    for i in 0..k {
+        let factor = top - BigInt::from(i);
+        if factor.is_zero() {
+            return BigInt::zero();
+        }
+        // The running product of i + 1 consecutive integers is divisible by
+        // (i + 1)!, so each division is exact.
+        result = result * factor / BigInt::from(i + 1);
+    }
+    result
 }
 
 pub fn format_bigint_vector(vector: &[BigInt]) -> String {
