@@ -33,5 +33,11 @@ jobs:
       - name: Build release artifacts
         run: cargo build --release
 
+      - name: Test release and reused library artifacts
+        run: |
+          cargo test --release --locked
+          cargo build --release --locked --lib
+          cargo test --release --locked --test broad_corner_cases
+
       - name: C ABI smoke test
         run: scripts/c_abi_smoke.sh

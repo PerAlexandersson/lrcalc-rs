@@ -1,5 +1,15 @@
 # Broader corner-case review, 2026-10-08
 
+Repair follow-up: release builds now use `panic = "unwind"`, matching Rust
+integration tests. Rebuilding a release library and rerunning release tests
+in the previously affected cache no longer emits the artifact-collision
+warnings or the BigInt identity error. CI now exercises both release tests
+and the repeated library-build/test sequence. The historical observations
+below describe the pre-repair state; no counting algorithm changed here.
+Full release tests and strict clippy pass. Both C smoke programs also pass
+against shared and static release libraries (four independently linked
+binaries); no ABI boundary was changed.
+
 Baseline: 4022bd3, isolated from the canonical checkout's uncommitted
 optimization edits. This is a test-only checkpoint. No new lrcalc-rs failure
 was found in this bounded review; it is not an exhaustive certification.

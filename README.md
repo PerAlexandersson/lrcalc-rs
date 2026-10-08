@@ -124,6 +124,13 @@ scripts/sage_lrcalc_bench.sh
 ```
 
 The Rust library target is named `lrcalc`, so release builds should produce
+the same unwind-compatible artifacts for library builds and Rust integration
+tests. Do not mix `panic = "abort"` release libraries with unwind tests in
+one Cargo target directory: their un-hashed library filenames collide.
+An escaping panic still aborts at the non-unwinding `extern "C"` ABI boundary.
+CI checks release tests after a library build and repeats that sequence.
+
+Release builds produce
 `liblrcalc.so` and `liblrcalc.a` on Linux.  The staging helper
 `scripts/stage_liblrcalc_prefix.sh` creates a local prefix under
 `target/lrcalc-rs-prefix` with `include/lrcalc/`, `liblrcalc.a`,
