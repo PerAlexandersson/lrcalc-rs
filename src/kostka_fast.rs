@@ -7,6 +7,123 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+type PackedBuildHasher = BuildHasherDefault<PackedKeyHasher>;
+type PackedCountMap = HashMap<u128, u128, PackedBuildHasher>;
+type PackedStateSet = HashSet<u128, PackedBuildHasher>;
+type PackedTransitionCache = HashMap<(u128, u32), Vec<u128>, PackedBuildHasher>;
+
+#[derive(Clone, Copy, Debug)]
+struct PackedKeyHasher {
+    state: u64,
+}
+
+impl Default for PackedKeyHasher {
+    fn default() -> Self {
+        Self {
+            state: 0x9e37_79b9_7f4a_7c15,
+        }
+    }
+}
+
+impl Hasher for PackedKeyHasher {
+    fn finish(&self) -> u64 {
+        avalanche(self.state)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut value = 0u64;
+            for (shift, byte) in chunk.iter().enumerate() {
+                value |= u64::from(*byte) << (8 * shift);
+            }
+            self.mix(value);
+        }
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.mix(u64::from(value));
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.mix(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.mix(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.mix(value);
+    }
+
+    fn write_u128(&mut self, value: u128) {
+        self.mix(value as u64);
+        self.mix((value >> 64) as u64);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.mix(value as u64);
+    }
+
+    fn write_i8(&mut self, value: i8) {
+        self.mix(value as u64);
+    }
+
+    fn write_i16(&mut self, value: i16) {
+        self.mix(value as u64);
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.mix(value as u64);
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.mix(value as u64);
+    }
+
+    fn write_i128(&mut self, value: i128) {
+        self.write_u128(value as u128);
+    }
+
+    fn write_isize(&mut self, value: isize) {
+        self.mix(value as u64);
+    }
+}
+
+impl PackedKeyHasher {
+    fn mix(&mut self, value: u64) {
+        self.state = self
+            .state
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .wrapping_add(value.rotate_left(27));
+    }
+}
+
+fn avalanche(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn packed_count_map() -> PackedCountMap {
+    HashMap::with_hasher(PackedBuildHasher::default())
+}
+
+fn packed_count_map_with_capacity(capacity: usize) -> PackedCountMap {
+    HashMap::with_capacity_and_hasher(capacity, PackedBuildHasher::default())
+}
+
+fn packed_state_set() -> PackedStateSet {
+    HashSet::with_hasher(PackedBuildHasher::default())
+}
+
+fn packed_state_set_with_capacity(capacity: usize) -> PackedStateSet {
+    HashSet::with_capacity_and_hasher(capacity, PackedBuildHasher::default())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KostkaFastError {
@@ -72,7 +189,7 @@ pub struct FastSkewKostkaEngine {
     lambda_key: u128,
     inner_key: u128,
     skew_size: u32,
-    transition_cache: HashMap<(u128, u32), Vec<u128>>,
+    transition_cache: PackedTransitionCache,
 }
 
 /// Compute the ordinary Kostka coefficient `K_{shape, weight}`.
@@ -150,16 +267,18 @@ pub fn skew_kostka_counts_stats(
     let inner_key = packer.pack_padded(&inner, outer.len())?;
     let outer_key = packer.pack(&outer)?;
 
-    let mut dp: HashMap<u128, u128> = HashMap::new();
+    let mut dp = packed_count_map();
     dp.insert(inner_key, 1);
-    let mut reachable = Vec::<HashSet<u128>>::with_capacity(weight.len() + 1);
-    reachable.push(HashSet::from([inner_key]));
+    let mut reachable = Vec::<PackedStateSet>::with_capacity(weight.len() + 1);
+    let mut first_reachable = packed_state_set();
+    first_reachable.insert(inner_key);
+    reachable.push(first_reachable);
     let mut full_peak_states = dp.len();
     let mut full_levels = vec![dp.len()];
 
     for &strip_size in &weight {
-        let mut next: HashMap<u128, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
-        let mut next_reachable = HashSet::new();
+        let mut next = packed_count_map_with_capacity(dp.len().saturating_mul(2));
+        let mut next_reachable = packed_state_set_with_capacity(dp.len().saturating_mul(2));
         for (&state, &count) in &dp {
             enumerate_strip_transitions(packer, &outer, state, strip_size, |transition| {
                 let entry = next.entry(transition.target).or_insert(0);
@@ -177,7 +296,10 @@ pub fn skew_kostka_counts_stats(
     }
 
     let full = dp.remove(&outer_key).unwrap_or(0);
-    let full_reachable_levels = reachable.iter().map(HashSet::len).collect::<Vec<_>>();
+    let full_reachable_levels = reachable
+        .iter()
+        .map(PackedStateSet::len)
+        .collect::<Vec<_>>();
     let coreachable = kostka_coreachable_levels(packer, &outer, &weight, outer_key, &reachable)?;
     if !coreachable[0].contains(&inner_key) {
         return Ok(KostkaCountsStats {
@@ -192,14 +314,13 @@ pub fn skew_kostka_counts_stats(
     let tight = kostka_tight_flags_on_complete_paths(packer, &outer, &weight, &coreachable)?;
     let (strict_lower, strict_diagonal) = tight.strict_counts();
 
-    let mut strict_dp: HashMap<u128, u128> = HashMap::new();
+    let mut strict_dp = packed_count_map();
     strict_dp.insert(inner_key, 1);
     let mut interior_peak_states = strict_dp.len();
     let mut interior_levels = vec![strict_dp.len()];
 
     for (step, &strip_size) in weight.iter().enumerate() {
-        let mut next: HashMap<u128, u128> =
-            HashMap::with_capacity(strict_dp.len().saturating_mul(2));
+        let mut next = packed_count_map_with_capacity(strict_dp.len().saturating_mul(2));
         for (&state, &count) in &strict_dp {
             enumerate_strip_transitions(packer, &outer, state, strip_size, |transition| {
                 if !coreachable[step + 1].contains(&transition.target)
@@ -374,7 +495,10 @@ pub fn skew_kostka_interior_stats(
     let outer_key = packer.pack(&outer)?;
 
     let reachable = kostka_reachable_levels(packer, &outer, &weight, inner_key)?;
-    let full_reachable_levels = reachable.iter().map(HashSet::len).collect::<Vec<_>>();
+    let full_reachable_levels = reachable
+        .iter()
+        .map(PackedStateSet::len)
+        .collect::<Vec<_>>();
     let coreachable = kostka_coreachable_levels(packer, &outer, &weight, outer_key, &reachable)?;
     if !coreachable[0].contains(&inner_key) {
         return Ok(KostkaInteriorStats {
@@ -386,13 +510,13 @@ pub fn skew_kostka_interior_stats(
     let tight = kostka_tight_flags_on_complete_paths(packer, &outer, &weight, &coreachable)?;
     let (strict_lower, strict_diagonal) = tight.strict_counts();
 
-    let mut dp: HashMap<u128, u128> = HashMap::new();
+    let mut dp = packed_count_map();
     dp.insert(inner_key, 1);
     let mut peak_states = dp.len();
     let mut levels = vec![dp.len()];
 
     for (step, &strip_size) in weight.iter().enumerate() {
-        let mut next: HashMap<u128, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
+        let mut next = packed_count_map_with_capacity(dp.len().saturating_mul(2));
         for (&state, &count) in &dp {
             enumerate_strip_transitions(packer, &outer, state, strip_size, |transition| {
                 if !kostka_transition_is_relative_interior(packer, step, state, &transition, &tight)
@@ -472,14 +596,14 @@ fn kostka_reachable_levels(
     outer: &[u32],
     weight: &[u32],
     inner_key: u128,
-) -> Result<Vec<HashSet<u128>>, KostkaFastError> {
+) -> Result<Vec<PackedStateSet>, KostkaFastError> {
     let mut levels = Vec::with_capacity(weight.len() + 1);
-    let mut current = HashSet::new();
+    let mut current = packed_state_set();
     current.insert(inner_key);
     levels.push(current);
 
     for &strip_size in weight {
-        let mut next = HashSet::new();
+        let mut next = packed_state_set();
         for &state in levels.last().expect("at least one level") {
             enumerate_strip_transitions(packer, outer, state, strip_size, |transition| {
                 next.insert(transition.target);
@@ -497,9 +621,11 @@ fn kostka_coreachable_levels(
     outer: &[u32],
     weight: &[u32],
     outer_key: u128,
-    reachable: &[HashSet<u128>],
-) -> Result<Vec<HashSet<u128>>, KostkaFastError> {
-    let mut coreachable = vec![HashSet::new(); weight.len() + 1];
+    reachable: &[PackedStateSet],
+) -> Result<Vec<PackedStateSet>, KostkaFastError> {
+    let mut coreachable = (0..=weight.len())
+        .map(|_| packed_state_set())
+        .collect::<Vec<_>>();
     if let Some(final_level) = reachable.last() {
         for &state in final_level {
             if state == outer_key {
@@ -530,7 +656,7 @@ fn kostka_tight_flags_on_complete_paths(
     packer: PackedPartitions,
     outer: &[u32],
     weight: &[u32],
-    coreachable: &[HashSet<u128>],
+    coreachable: &[PackedStateSet],
 ) -> Result<KostkaTightFlags, KostkaFastError> {
     // Tightness on the lattice points of this dilation does not determine the
     // affine hull of the rational polytope, so the implicit equalities come
@@ -648,7 +774,7 @@ impl FastSkewKostkaEngine {
             lambda_key,
             inner_key,
             skew_size: outer_size - inner_size,
-            transition_cache: HashMap::new(),
+            transition_cache: HashMap::with_hasher(PackedBuildHasher::default()),
         })
     }
 
@@ -683,7 +809,7 @@ impl FastSkewKostkaEngine {
             }
         }
 
-        let mut dp: HashMap<u128, u128> = HashMap::new();
+        let mut dp = packed_count_map();
         dp.insert(self.inner_key, 1);
 
         let mut peak_states = dp.len();
@@ -695,7 +821,7 @@ impl FastSkewKostkaEngine {
                 continue;
             }
 
-            let mut next: HashMap<u128, u128> = HashMap::with_capacity(dp.len().saturating_mul(2));
+            let mut next = packed_count_map_with_capacity(dp.len().saturating_mul(2));
             for (&state, &count) in &dp {
                 let successors = match self.transition_cache.entry((state, strip_size)) {
                     Entry::Occupied(entry) => entry.into_mut(),

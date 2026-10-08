@@ -1,5 +1,6 @@
 //! Ehrhart interpolation for stretched Littlewood-Richardson coefficients.
 
+use crate::kostka_fast::{skew_kostka_fast_u128, skew_kostka_interior_u128, KostkaFastError};
 use crate::lrcoef::{
     beta_lrcoef_buch_stretch_cache, beta_lrcoef_buch_stretched_counts_u128,
     lrcoef_buch_stretch_cache, lrcoef_buch_stretched_counts_u128, BetaLrBuchStretchCache,
@@ -144,6 +145,20 @@ pub fn compute_beta_lr_stretch_polynomial(
     };
     let dimension = stretch_cache.dimension();
 
+    if beta_dominates_content(beta, content) {
+        return interpolate_stretch_polynomial(dimension, |stretch| {
+            match scaled_skew_kostka_counts(outer, inner, content, stretch) {
+                // The packed optimization must not shrink the LR API's
+                // accepted domain or expose an intermediate overflow when
+                // the original counter can still compute the answer.
+                Err(LrStretchError::StateTooWide | LrStretchError::ArithmeticOverflow) => {
+                    scaled_beta_lr_counts(&stretch_cache, stretch)
+                }
+                result => result,
+            }
+        });
+    }
+
     interpolate_stretch_polynomial(dimension, |stretch| {
         scaled_beta_lr_counts(&stretch_cache, stretch)
     })
@@ -265,6 +280,69 @@ fn scaled_beta_lr_counts(
     beta_lrcoef_buch_stretched_counts_u128(stretch_cache, stretch).map_err(map_lrcoef_error)
 }
 
+fn scaled_skew_kostka_counts(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    stretch: u64,
+) -> Result<LrBuchCounts, LrStretchError> {
+    if stretch == 0 {
+        return Ok(LrBuchCounts {
+            full: 1,
+            interior: 1,
+        });
+    }
+
+    let outer = scale_vector_i32(outer, stretch)?;
+    let inner = scale_vector_i32(inner, stretch)?;
+    let content = scale_vector_i32(content, stretch)?;
+    Ok(LrBuchCounts {
+        full: skew_kostka_fast_u128(&outer, &inner, &content).map_err(map_kostka_fast_error)?,
+        interior: skew_kostka_interior_u128(&outer, &inner, &content)
+            .map_err(map_kostka_fast_error)?,
+    })
+}
+
+fn beta_dominates_content(beta: &[i32], content: &[i32]) -> bool {
+    let label_count = vector_length(beta).max(vector_length(content));
+    for label in 2..=label_count {
+        let previous_beta = vector_entry(beta, label - 2);
+        let current_beta = vector_entry(beta, label - 1);
+        let content_supply = vector_entry(content, label - 1);
+        let Some(slack) = previous_beta.checked_sub(current_beta) else {
+            return false;
+        };
+        if content_supply > 0 && slack <= content_supply {
+            return false;
+        }
+    }
+    true
+}
+
+fn vector_length(vector: &[i32]) -> usize {
+    vector
+        .iter()
+        .rposition(|&entry| entry != 0)
+        .map_or(0, |index| index + 1)
+}
+
+fn vector_entry(vector: &[i32], index: usize) -> i32 {
+    vector.get(index).copied().unwrap_or(0)
+}
+
+fn scale_vector_i32(parts: &[i32], stretch: u64) -> Result<Vec<i32>, LrStretchError> {
+    let stretch = i64::try_from(stretch).map_err(|_| LrStretchError::ArithmeticOverflow)?;
+    parts
+        .iter()
+        .map(|&part| {
+            let scaled = i64::from(part)
+                .checked_mul(stretch)
+                .ok_or(LrStretchError::ArithmeticOverflow)?;
+            i32::try_from(scaled).map_err(|_| LrStretchError::ArithmeticOverflow)
+        })
+        .collect()
+}
+
 fn compute_h_vector_from_coefficients(
     coefficients: &[BigRational],
     dimension: usize,
@@ -359,6 +437,14 @@ fn map_lrcoef_error(error: LrCoefError) -> LrStretchError {
     match error {
         LrCoefError::InvalidPartition => LrStretchError::InvalidInput,
         LrCoefError::ArithmeticOverflow => LrStretchError::ArithmeticOverflow,
+    }
+}
+
+fn map_kostka_fast_error(error: KostkaFastError) -> LrStretchError {
+    match error {
+        KostkaFastError::InvalidInput => LrStretchError::InvalidInput,
+        KostkaFastError::ArithmeticOverflow => LrStretchError::ArithmeticOverflow,
+        KostkaFastError::StateTooWide => LrStretchError::StateTooWide,
     }
 }
 
