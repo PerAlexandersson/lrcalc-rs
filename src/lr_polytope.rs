@@ -27,6 +27,15 @@
 //! implicit equalities exactly with [`crate::affine_hull`], whose result is
 //! certified by an exact relative-interior point and dual certificate.  The
 //! result is invariant under dilation.
+//!
+//! Dimension zero means a single rational point, not necessarily a lattice
+//! point.  The stretching interpolation treats a zero-dimensional family as
+//! the constant one.  If the polytope has a lattice point at dilation one,
+//! that point is the whole polytope and the assumption holds.  This is so
+//! for ordinary LR coefficients by saturation (Knutson--Tao) and for
+//! straight-shape Kostka numbers, whose nonemptiness is the dominance
+//! condition.  For other families (skew Kostka, general beta-LR) it is an
+//! assumption of the interpolation, as is polynomiality.
 
 use crate::affine_hull::{rational, AffineHull, RationalPolyhedron};
 
