@@ -35,9 +35,15 @@ cargo test --locked --test broad_corner_cases -- --nocapture
 cargo test --release --locked --test broad_corner_cases -- --nocapture
 ```
 
-The full debug suite also passes. Release Cargo emits its existing
+The full debug suite and strict clippy also pass. Release Cargo emits a
 library-output filename-collision warning for the rlib/staticlib/cdylib
-targets; the test executable builds and all assertions pass. This review
-does not resolve that build-configuration warning or exhaustively audit
-the C ABI, allocation failure, very large state spaces, or all optional
-features.
+targets. The first release run passed; a later rebuild in the reused cache
+failed with incompatible `BigInt` crate identities despite the same version.
+A fresh external target directory (`/cargo-target/lrcalc-broad-audit-20261008`)
+then built successfully and all five tests passed again. The build-artifact
+collision remains a separate reproducibility concern; this review does not
+fix it or claim its cause is fully diagnosed. The release profile uses
+`panic = "abort"`, while test builds also require unwind artifacts.
+
+This review does not exhaustively audit the C ABI, allocation failure, very
+large state spaces, or all optional features.
