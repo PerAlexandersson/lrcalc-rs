@@ -2083,7 +2083,9 @@ fn beta_lrcoef_count(shape: &BetaSkewShape) -> Result<u128, LrCoefError> {
             x -= 1;
         }
 
-        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+        // Beta labels can be capped below the north entry, so test the whole
+        // column-strictness inequality rather than equality.
+        if x <= above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
             if pos == 0 {
                 break;
             }
@@ -2382,7 +2384,9 @@ where
             x -= 1;
         }
 
-        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+        // Beta labels can be capped below the north entry, so test the whole
+        // column-strictness inequality rather than equality.
+        if x <= above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
             if pos == 0 {
                 break;
             }
@@ -2788,7 +2792,9 @@ fn beta_lrcoef_count_strict_tableaux(
             x -= 1;
         }
 
-        if x == above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
+        // Beta labels can be capped below the north entry, so test the whole
+        // column-strictness inequality rather than equality.
+        if x <= above || n - pos as i32 - se_supply <= boxes[pos].west_sz {
             if pos == 0 {
                 break;
             }
