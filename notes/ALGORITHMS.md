@@ -43,8 +43,21 @@ The production path currently uses these principles.
   dispatch to the packed Kostka DP.
 - Use explicit h-vector interpolation for stretched LR computations when the
   caller asks for the stretched/Ehrhart path.
-- Keep GT-chain counting as an independent check and as a source of dimension
-  and interior-count data, not as the default general LR coefficient engine.
+- Keep GT-chain counting as an independent check and as a source of
+  interior-count data, not as the default general LR coefficient engine.
+- Compute LR, beta-LR, and skew Kostka dimensions and relative-interior masks
+  from the exact affine hull of the rational polytope (`src/lr_polytope.rs`,
+  `src/affine_hull.rs`).  One homogenized linear program (Freund, Roundy and
+  Todd, 1985) identifies every implicit equality, and its answer is checked
+  by an exact relative-interior point and an exact dual certificate.  Do not
+  infer tightness from the tableaux at a fixed dilation: they need not span
+  the polytope.  For example, the five tableaux of
+  `c^{(7,6,5,4,2)}_{(6,5,4,2),(3,2,2)}` have no 3 in the third row, but the
+  polytope has dimension four.  The Buch, GT-chain, and packed Kostka engines
+  share this exact model, so their agreement is not independent evidence;
+  regressions compare stretching polynomials with direct counts at fresh
+  dilations instead.  Each affine hull costs one exact simplex solve, which
+  is cheap compared with tableau enumeration on the tested shapes.
 
 ## Current Performance Picture
 

@@ -11,9 +11,8 @@ use std::collections::{HashMap, HashSet};
 use crate::kostka_fast::{
     kostka_counts_stats, kostka_fast_stats, KostkaCountsStats, KostkaFastError, KostkaFastStats,
 };
+use crate::lr_polytope::exact_tight_flags;
 use crate::lrcoef::{lrcoef, lrcoef_buch_counts_u128, optim_coef, LrCoefError, OptimizedCoef};
-use num_rational::BigRational;
-use num_traits::Zero;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LrGtError {
@@ -274,36 +273,7 @@ pub fn lrcoef_gt_dimension(
         return Ok(None);
     }
 
-    let rows = outer.len();
-    let partition_packer = Packer::new(bit_width(*outer.first().unwrap_or(&0)), rows)?;
-    let prefix_packer = Packer::new(bit_width(content_size), rows + 1)?;
-    let inner_key = partition_packer.pack_padded(&inner)?;
-    let outer_key = partition_packer.pack(&outer)?;
-    let start = (inner_key, 0);
-
-    let reachable = reachable_levels(partition_packer, prefix_packer, &outer, &content, start)?;
-    let coreachable = coreachable_levels(
-        partition_packer,
-        prefix_packer,
-        &outer,
-        &content,
-        outer_key,
-        &reachable,
-    )?;
-    if !coreachable[0].contains(&start) {
-        return Ok(None);
-    }
-
-    let tight = tight_flags_on_complete_paths(
-        partition_packer,
-        prefix_packer,
-        &outer,
-        &content,
-        &coreachable,
-    )?;
-    Ok(Some(lr_dimension_from_tight_flags(
-        &outer, &content, &tight,
-    )))
+    Ok(exact_gt_tight_flags(&outer, &inner, &content).map(|(dimension, _)| dimension))
 }
 
 /// Compute `c^outer_{inner, content}` with DP state-count statistics.
@@ -674,13 +644,8 @@ fn lrcoef_gt_counts_stats_compacted(
         });
     }
 
-    let tight = tight_flags_on_complete_paths(
-        partition_packer,
-        prefix_packer,
-        &outer,
-        &content,
-        &coreachable,
-    )?;
+    let (_, tight) = exact_gt_tight_flags(&outer, &inner, &content)
+        .expect("a polytope with a lattice point is nonempty");
     let (strict_lower, strict_diagonal, strict_yamanouchi) = tight.strict_counts();
 
     let mut strict_dp: HashMap<State, u128> = HashMap::new();
@@ -1015,6 +980,10 @@ fn lrcoef_gt_interior_dfs_stats_compacted(
         });
     }
 
+    // The weak search above only certifies a lattice point.  Tightness on
+    // the lattice points at one dilation does not determine the affine hull.
+    let (_, tight) = exact_gt_tight_flags(&outer, &inner, &content)
+        .expect("a polytope with a lattice point is nonempty");
     let (strict_lower, strict_diagonal, strict_yamanouchi) = tight.strict_counts();
     let mut strict_nodes = 0usize;
     let value = count_relative_interior_by_dfs(
@@ -1093,13 +1062,8 @@ fn lrcoef_gt_interior_stats_compacted(
         });
     }
 
-    let tight = tight_flags_on_complete_paths(
-        partition_packer,
-        prefix_packer,
-        &outer,
-        &content,
-        &coreachable,
-    )?;
+    let (_, tight) = exact_gt_tight_flags(&outer, &inner, &content)
+        .expect("a polytope with a lattice point is nonempty");
     let (strict_lower, strict_diagonal, strict_yamanouchi) = tight.strict_counts();
 
     let mut dp: HashMap<State, u128> = HashMap::new();
@@ -1505,42 +1469,36 @@ fn coreachable_levels(
     Ok(coreachable)
 }
 
-fn tight_flags_on_complete_paths(
-    partition_packer: Packer,
-    prefix_packer: Packer,
+/// Exact dimension and implicit equalities of the LR GT/Yamanouchi polytope.
+///
+/// `None` means that the rational polytope is empty.  See
+/// [`crate::lr_polytope`] for the inequality system and the certificate.
+fn exact_gt_tight_flags(
     outer: &[u32],
+    inner: &[u32],
     content: &[u32],
-    coreachable: &[HashSet<State>],
-) -> Result<TightFlags, LrGtError> {
-    let rows = outer.len();
-    let mut tight = TightFlags::new(content.len(), rows);
-
-    for (step, &strip_size) in content.iter().enumerate() {
-        for &state in &coreachable[step] {
-            enumerate_transition_details(
-                partition_packer,
-                prefix_packer,
-                outer,
-                state.0,
-                strip_size,
-                previous_prefix_key(step, state),
-                |transition| {
-                    if coreachable[step + 1].contains(&transition.target) {
-                        tight.observe_transition(
-                            partition_packer,
-                            prefix_packer,
-                            step,
-                            state,
-                            &transition,
-                        );
-                    }
-                    Ok(())
-                },
-            )?;
-        }
-    }
-
-    Ok(tight)
+) -> Option<(usize, TightFlags)> {
+    let widen = |values: &[u32]| {
+        values
+            .iter()
+            .map(|&value| i64::from(value))
+            .collect::<Vec<_>>()
+    };
+    let exact = exact_tight_flags(
+        &widen(outer),
+        &widen(inner),
+        &widen(content),
+        content.len(),
+        Some(&[]),
+    )?;
+    Some((
+        exact.dimension,
+        TightFlags {
+            lower: exact.lower,
+            diagonal: exact.diagonal,
+            yamanouchi: exact.yamanouchi,
+        },
+    ))
 }
 
 fn previous_prefix_key(step: usize, state: State) -> Option<u128> {
@@ -1837,110 +1795,6 @@ impl TightFlags {
             .count();
         (lower, diagonal, yamanouchi)
     }
-}
-
-fn lr_dimension_from_tight_flags(outer: &[u32], content: &[u32], tight: &TightFlags) -> usize {
-    let rows = outer.len();
-    let steps = content.len();
-    let variable_count = rows * steps;
-    let mut equations = Vec::<Vec<i32>>::new();
-
-    let var = |step: usize, row: usize| -> usize { step * rows + row };
-
-    for step in 0..steps {
-        let mut equation = vec![0; variable_count];
-        for row in 0..rows {
-            equation[var(step, row)] = 1;
-        }
-        equations.push(equation);
-    }
-
-    for row in 0..rows {
-        let mut equation = vec![0; variable_count];
-        for step in 0..steps {
-            equation[var(step, row)] = 1;
-        }
-        equations.push(equation);
-    }
-
-    for step in 0..steps {
-        for row in 0..rows {
-            if tight.lower[step][row] {
-                let mut equation = vec![0; variable_count];
-                equation[var(step, row)] = 1;
-                equations.push(equation);
-            }
-
-            if row > 0 && tight.diagonal[step][row] {
-                let mut equation = vec![0; variable_count];
-                for earlier in 0..=step {
-                    equation[var(earlier, row)] += 1;
-                }
-                for earlier in 0..step {
-                    equation[var(earlier, row - 1)] -= 1;
-                }
-                equations.push(equation);
-            }
-
-            if step > 0 && tight.yamanouchi[step][row] {
-                let mut equation = vec![0; variable_count];
-                for prefix_row in 0..=row {
-                    equation[var(step, prefix_row)] += 1;
-                }
-                for prefix_row in 0..row {
-                    equation[var(step - 1, prefix_row)] -= 1;
-                }
-                equations.push(equation);
-            }
-        }
-    }
-
-    let rank = rational_rank(&equations);
-    variable_count.saturating_sub(rank)
-}
-
-fn rational_rank(equations: &[Vec<i32>]) -> usize {
-    let Some(first) = equations.first() else {
-        return 0;
-    };
-    let column_count = first.len();
-    let mut matrix: Vec<Vec<BigRational>> = equations
-        .iter()
-        .filter(|row| row.iter().any(|&entry| entry != 0))
-        .map(|row| {
-            row.iter()
-                .map(|&entry| BigRational::from_integer(entry.into()))
-                .collect()
-        })
-        .collect();
-
-    let mut rank = 0usize;
-    for col in 0..column_count {
-        let Some(pivot_row) = (rank..matrix.len()).find(|&row| !matrix[row][col].is_zero()) else {
-            continue;
-        };
-        matrix.swap(rank, pivot_row);
-        let pivot = matrix[rank][col].clone();
-        for entry in matrix[rank].iter_mut().skip(col) {
-            *entry /= pivot.clone();
-        }
-        let pivot_tail = matrix[rank][col..column_count].to_vec();
-        for (row, row_entries) in matrix.iter_mut().enumerate() {
-            if row == rank || row_entries[col].is_zero() {
-                continue;
-            }
-            let factor = row_entries[col].clone();
-            for (entry, pivot_entry) in row_entries[col..column_count].iter_mut().zip(&pivot_tail) {
-                let sub = factor.clone() * pivot_entry;
-                *entry -= sub;
-            }
-        }
-        rank += 1;
-        if rank == matrix.len() {
-            break;
-        }
-    }
-    rank
 }
 
 impl Packer {

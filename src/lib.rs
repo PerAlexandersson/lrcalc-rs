@@ -7,10 +7,12 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod abi;
+pub mod affine_hull;
 pub mod kostka;
 pub mod kostka_fast;
 pub mod lr_ehrhart;
 pub mod lr_gt;
+mod lr_polytope;
 pub mod lr_signed;
 pub mod lrcoef;
 pub mod partition;

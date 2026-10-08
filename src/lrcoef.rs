@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::slice;
 
+use crate::lr_polytope::exact_tight_flags;
 use num_rational::BigRational;
 use num_traits::Zero;
 
@@ -2218,51 +2219,85 @@ fn buch_tight_data(
     inner: &[i32],
     content: &[i32],
 ) -> Result<Option<BuchTightData>, LrCoefError> {
-    let rows = outer.len();
     let steps = part_length(content);
-    let mut tight = BuchTightFlags::new(steps, rows);
+    let Some(tight) = exact_buch_tight_flags(outer, inner, content, steps, &[])? else {
+        return Ok(None);
+    };
     let mut weak_tableaux = 0u128;
-    lrcoef_for_each_tableau(outer, inner, content, |boxes| {
+    lrcoef_for_each_tableau(outer, inner, content, |_| {
         weak_tableaux = weak_tableaux
             .checked_add(1)
             .ok_or(LrCoefError::ArithmeticOverflow)?;
-        let increments = tableau_increments(boxes, rows, steps)?;
-        tight.observe_tableau(inner, &increments);
         Ok(())
     })?;
-
-    if weak_tableaux == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(BuchTightData {
-            tight,
-            weak_tableaux,
-        }))
-    }
+    Ok(Some(BuchTightData {
+        tight,
+        weak_tableaux,
+    }))
 }
 
 fn buch_tight_data_beta(shape: &BetaSkewShape) -> Result<Option<BuchTightData>, LrCoefError> {
-    let rows = shape.outer.len();
-    let steps = shape.label_count;
-    let mut tight = BuchTightFlags::new(steps, rows);
+    let Some(tight) = exact_buch_tight_flags(
+        &shape.outer,
+        &shape.inner,
+        &shape.content,
+        shape.label_count,
+        &shape.beta,
+    )?
+    else {
+        return Ok(None);
+    };
     let mut weak_tableaux = 0u128;
-    beta_lrcoef_for_each_tableau(shape, |boxes| {
+    beta_lrcoef_for_each_tableau(shape, |_| {
         weak_tableaux = weak_tableaux
             .checked_add(1)
             .ok_or(LrCoefError::ArithmeticOverflow)?;
-        let increments = tableau_increments(boxes, rows, steps)?;
-        tight.observe_tableau_beta(&shape.inner, &increments, &shape.beta);
         Ok(())
     })?;
+    Ok(Some(BuchTightData {
+        tight,
+        weak_tableaux,
+    }))
+}
 
-    if weak_tableaux == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(BuchTightData {
-            tight,
-            weak_tableaux,
-        }))
+/// Exact implicit equalities of the (beta-)LR polytope on a compacted shape.
+///
+/// `None` means that the rational polytope is empty.  A nonempty polytope may
+/// still have no lattice point at dilation one, in which case the returned
+/// tableau count is zero.  Tightness is never inferred from the tableaux at a
+/// single dilation; see [`crate::lr_polytope`].
+fn exact_buch_tight_flags(
+    outer: &[i32],
+    inner: &[i32],
+    content: &[i32],
+    steps: usize,
+    beta: &[i32],
+) -> Result<Option<BuchTightFlags>, LrCoefError> {
+    let widen = |values: &[i32]| {
+        values
+            .iter()
+            .map(|&value| i64::from(value))
+            .collect::<Vec<_>>()
+    };
+    if inner.len() > outer.len() && inner[outer.len()..].iter().any(|&part| part != 0) {
+        return Ok(None);
     }
+    let Some(exact) = exact_tight_flags(
+        &widen(outer),
+        &widen(inner),
+        &widen(content),
+        steps,
+        Some(&widen(beta)),
+    ) else {
+        return Ok(None);
+    };
+    let tight = BuchTightFlags {
+        lower: exact.lower,
+        diagonal: exact.diagonal,
+        yamanouchi: exact.yamanouchi,
+    };
+    debug_assert_eq!(buch_dimension_from_tight_flags(&tight), exact.dimension);
+    Ok(Some(tight))
 }
 
 fn lrcoef_for_each_tableau<F>(
@@ -2883,28 +2918,6 @@ fn lrcoef_count_strict_tableaux_memo(
     Ok((value, memo_states, counter.counters))
 }
 
-fn tableau_increments(
-    boxes: &[LrCoefBox],
-    rows: usize,
-    steps: usize,
-) -> Result<Vec<u32>, LrCoefError> {
-    let mut increments = vec![0u32; rows.saturating_mul(steps)];
-    for cell in boxes {
-        let step = usize::try_from(cell.value - 1).map_err(|_| LrCoefError::ArithmeticOverflow)?;
-        if step >= steps || cell.row >= rows {
-            return Err(LrCoefError::ArithmeticOverflow);
-        }
-        let index = step
-            .checked_mul(rows)
-            .and_then(|value| value.checked_add(cell.row))
-            .ok_or(LrCoefError::ArithmeticOverflow)?;
-        increments[index] = increments[index]
-            .checked_add(1)
-            .ok_or(LrCoefError::ArithmeticOverflow)?;
-    }
-    Ok(increments)
-}
-
 fn new_content(content: &[i32]) -> Vec<LrCoefContent> {
     let n = part_length(content);
     debug_assert!(n > 0);
@@ -3081,43 +3094,6 @@ impl BuchTightFlags {
             lower: vec![vec![true; rows]; steps],
             diagonal: vec![vec![true; rows]; steps],
             yamanouchi: vec![vec![true; rows]; steps],
-        }
-    }
-
-    fn observe_tableau(&mut self, inner: &[i32], increments: &[u32]) {
-        self.observe_tableau_beta(inner, increments, &[]);
-    }
-
-    fn observe_tableau_beta(&mut self, inner: &[i32], increments: &[u32], beta: &[i32]) {
-        let rows = self.lower.first().map_or(0, Vec::len);
-        let mut shape = (0..rows)
-            .map(|row| part_entry(inner, row) as u32)
-            .collect::<Vec<_>>();
-
-        for step in 0..self.lower.len() {
-            for row in 0..rows {
-                let increment = increment_at(increments, rows, step, row);
-                if increment > 0 {
-                    self.lower[step][row] = false;
-                }
-                if row > 0 && shape[row] + increment < shape[row - 1] {
-                    self.diagonal[step][row] = false;
-                }
-            }
-            for (row, shape_row) in shape.iter_mut().enumerate().take(rows) {
-                *shape_row += increment_at(increments, rows, step, row);
-            }
-            if step > 0 {
-                for row in 0..rows {
-                    let current_prefix = prefix_sum(increments, rows, step, row + 1);
-                    let previous_prefix = prefix_sum(increments, rows, step - 1, row);
-                    let current = beta_entry_u64(beta, step) + u64::from(current_prefix);
-                    let previous = beta_entry_u64(beta, step - 1) + u64::from(previous_prefix);
-                    if current < previous {
-                        self.yamanouchi[step][row] = false;
-                    }
-                }
-            }
         }
     }
 
@@ -3521,16 +3497,6 @@ fn rational_rank(equations: &[Vec<i32>]) -> usize {
         }
     }
     rank
-}
-
-fn increment_at(increments: &[u32], rows: usize, step: usize, row: usize) -> u32 {
-    increments[step * rows + row]
-}
-
-fn prefix_sum(increments: &[u32], rows: usize, step: usize, row_count: usize) -> u32 {
-    (0..row_count)
-        .map(|row| increment_at(increments, rows, step, row))
-        .sum()
 }
 
 fn zero_buch_interior_stats() -> LrBuchInteriorStats {

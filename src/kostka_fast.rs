@@ -532,18 +532,36 @@ fn kostka_tight_flags_on_complete_paths(
     weight: &[u32],
     coreachable: &[HashSet<u128>],
 ) -> Result<KostkaTightFlags, KostkaFastError> {
-    let mut tight = KostkaTightFlags::new(weight.len(), outer.len());
-    for (step, &strip_size) in weight.iter().enumerate() {
-        for &state in &coreachable[step] {
-            enumerate_strip_transitions(packer, outer, state, strip_size, |transition| {
-                if coreachable[step + 1].contains(&transition.target) {
-                    tight.observe_transition(packer, step, state, &transition);
-                }
-                Ok(())
-            })?;
-        }
-    }
-    Ok(tight)
+    // Tightness on the lattice points of this dilation does not determine the
+    // affine hull of the rational polytope, so the implicit equalities come
+    // from the certified exact affine hull instead.  Callers only reach this
+    // after checking that the inner shape reaches the outer shape, so the
+    // unique level-zero coreachable state is the packed inner shape.
+    let inner_key = *coreachable[0]
+        .iter()
+        .next()
+        .expect("the inner shape reaches the outer shape");
+    let widen = |values: &[u32]| {
+        values
+            .iter()
+            .map(|&value| i64::from(value))
+            .collect::<Vec<_>>()
+    };
+    let inner = (0..outer.len())
+        .map(|row| i64::from(packer.get(inner_key, row)))
+        .collect::<Vec<_>>();
+    let exact = crate::lr_polytope::exact_tight_flags(
+        &widen(outer),
+        &inner,
+        &widen(weight),
+        weight.len(),
+        None,
+    )
+    .expect("a polytope with a lattice point is nonempty");
+    Ok(KostkaTightFlags {
+        lower: exact.lower,
+        diagonal: exact.diagonal,
+    })
 }
 
 fn kostka_transition_is_relative_interior(
@@ -569,34 +587,6 @@ fn kostka_transition_is_relative_interior(
 }
 
 impl KostkaTightFlags {
-    fn new(steps: usize, rows: usize) -> Self {
-        Self {
-            lower: vec![vec![true; rows]; steps],
-            diagonal: vec![vec![true; rows]; steps],
-        }
-    }
-
-    fn observe_transition(
-        &mut self,
-        packer: PackedPartitions,
-        step: usize,
-        source: u128,
-        transition: &StripTransition,
-    ) {
-        for row in 0..transition.increments.len() {
-            if transition.increments[row] > 0 {
-                self.lower[step][row] = false;
-            }
-            if row > 0 {
-                let target_value = packer.get(transition.target, row);
-                let diagonal_bound = packer.get(source, row - 1);
-                if target_value < diagonal_bound {
-                    self.diagonal[step][row] = false;
-                }
-            }
-        }
-    }
-
     fn strict_counts(&self) -> (usize, usize) {
         let lower = self
             .lower
